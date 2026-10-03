@@ -43,14 +43,29 @@ Bullets chip walls away, and the ink **always goes back to whoever drew that wal
 
 ### Powerups
 
-A random powerup appears every 30 seconds. Walk over one to grab it.
+Every round starts with 3 random powerups on the map, and a new one appears every 30 seconds. Walk over one to grab it.
 
 | Powerup | Effect |
 |---|---|
 | **FAT** (orange) | Draw walls twice as thick for 15 seconds |
-| **RIC** (red) | Instant reload, and your next 30 bullets ricochet 3 times. Careful, they can hit you too |
+| **RIC** (red) | Instant reload, and your next 30 shots ricochet 3 times (any gun except rockets). Careful, they can hit you too |
 | **SMOL** (blue) | Shrink to half size for 15 seconds |
 | **DEF** (green) | 12 orbiting spheres that block bullets. Each takes 2 hits |
+
+**Weapons** replace your pistol until their ammo runs out, then you're back to the pistol.
+
+| Weapon | Effect |
+|---|---|
+| **Shotgun** (yellow) | Fires 6 pellets in a 30° arc. 60 pellets, so 10 shots |
+| **Uzi** (purple) | 90 fast bullets at twice the pistol's speed. They fizzle out after a short distance |
+| **Rocket** (gray) | 6 slower rockets that home in on the nearest enemy. A direct hit does 3 damage. The explosion does 2 damage to everyone nearby, you included, and blasts holes in walls |
+
+**Map events**
+
+| Powerup | Effect |
+|---|---|
+| **Eraser** (teal) | Every wall on the map vanishes and everyone's pen refills |
+| **Meteors** (dark) | Over the next 10 seconds, 3 meteors strike random spots, one at a time. Get out of the flashing circle before it explodes, or take 5 damage. The picker isn't safe either |
 
 ### Host settings
 
@@ -88,7 +103,7 @@ Then open http://localhost:8000. Opening `index.html` directly from disk won't w
 | `js/match.js` | Rounds |
 | `js/room.js` | Lobby |
 | `js/bots.js` | Bots |
-| `js/render.js`, `js/pixel.js` | Drawing |
+| `js/render.js`, `js/pixel.js`, `js/fx.js`, `js/icons.js` | Drawing, effects and powerup icons |
 | `js/background.js` | Background art |
 | `js/synth.js`, `js/audio.js` | Sound |
 | `js/net.js`, `js/netsync.js` | Networking |

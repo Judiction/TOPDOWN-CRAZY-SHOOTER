@@ -3,6 +3,8 @@ import {
   POWERUP_RADIUS, FAT_DURATION, SMALL_DURATION, SHIELD_RADIUS, SHIELD_HITS,
   playerRadius, brushRadius, shieldPositions,
 } from './game.js';
+import { updateFx, shakeOffset, drawBackgroundFx, drawWallFx, drawMeteors, drawSmoke, drawTopFx } from './fx.js';
+import { powerupIcon } from './icons.js';
 import { createBackground, BG_W, BG_H } from './background.js';
 import { PX, VIEW_W, VIEW_H, snap, disc, ring, drawSprite, rect, drawText, hexToRgb } from './pixel.js';
 
@@ -13,13 +15,21 @@ export const POWERUP_STYLE = {
   ricochet: { label: 'RIC',  fill: '#ef4444', outline: '#7f1d1d' },
   small:    { label: 'SMOL', fill: '#3b82f6', outline: '#1e3a8a' },
   defense:  { label: 'DEF',  fill: '#22c55e', outline: '#14532d' },
+  shotgun:  { label: 'SHOTGUN', fill: '#facc15', outline: '#713f12' },
+  uzi:      { label: 'UZI',     fill: '#a855f7', outline: '#3b0764' },
+  rocket:   { label: 'ROCKET',  fill: '#94a3b8', outline: '#1e293b' },
+  eraser:   { label: 'ERASER',  fill: '#2dd4bf', outline: '#134e4a' },
+  meteor:   { label: 'METEORS', fill: '#1e1b4b', outline: '#f97316' },
 };
 
 const SHIELD_FRESH = '#86efac';
 const SHIELD_CRACKED = '#16a34a';
+// Per bullet kind: pixel radius + colors. Ricochet rounds of any gun are red.
 const BULLET_STYLE = {
-  normal:   { fill: '#ffe066', outline: '#7a5c00' },
-  ricochet: { fill: '#ff6b6b', outline: '#7f1d1d' },
+  pistol:   { r: 2, fill: '#ffe066', outline: '#7a5c00' },
+  pellet:   { r: 1, fill: '#ffb347', outline: '#7c2d12' },
+  uzi:      { r: 1, fill: '#e9d5ff', outline: '#3b0764' },
+  ricochet: { r: 2, fill: '#ff6b6b', outline: '#7f1d1d' },
 };
 const BAR_BG = '#000000aa';
 
@@ -74,8 +84,11 @@ export function initCanvas(canvas) {
 let lastGame = null;
 
 export function render(ctx, game, localId, input) {
-  // Everything below is in arena units; this maps them onto the half-resolution canvas.
-  ctx.setTransform(1 / PX, 0, 0, 1 / PX, 0, 0);
+  const now = performance.now();
+  // Everything below is in arena units; this maps them onto the half-resolution canvas
+  // (offset by any screen shake).
+  const shake = shakeOffset(now);
+  ctx.setTransform(1 / PX, 0, 0, 1 / PX, shake.x / PX, shake.y / PX);
   ctx.imageSmoothingEnabled = false;
   if (game !== lastGame) {
     // New round = fresh game state: forget what we'd drawn and flashed for the old one.
@@ -84,9 +97,12 @@ export function render(ctx, game, localId, input) {
     for (const id of Object.keys(seenHits)) delete seenHits[id];
   }
 
+  updateFx(game, now, wallPixels);   // before drawWalls: the eraser effect needs the old walls
   drawBackground(ctx, game.bgSeed);
   drawHitFlash(ctx, game);
+  drawBackgroundFx(ctx, now);
   drawWalls(ctx, game);
+  drawWallFx(ctx, now);
 
   const border = '#3a3f4b';
   rect(ctx, 0, 0, ARENA.w, PX * 2, border);
@@ -94,14 +110,20 @@ export function render(ctx, game, localId, input) {
   rect(ctx, 0, 0, PX * 2, ARENA.h, border);
   rect(ctx, ARENA.w - PX * 2, 0, PX * 2, ARENA.h, border);
 
+  drawMeteors(ctx, game);
   for (const u of game.powerups) drawPowerup(ctx, u);
   for (const p of Object.values(game.players)) drawPlayer(ctx, p, game.rules);
 
-  const br = Math.round(BULLET_RADIUS / PX);
+  drawSmoke(ctx, now);
   for (const b of game.bullets) {
-    const s = b.ricochet ? BULLET_STYLE.ricochet : BULLET_STYLE.normal;
-    drawSprite(ctx, disc(br, s.fill, s.outline), b.x, b.y);
+    if (b.kind === 'rocket') drawRocket(ctx, b);
+    else {
+      const base = BULLET_STYLE[b.kind] || BULLET_STYLE.pistol;
+      const look = b.ricochet ? BULLET_STYLE.ricochet : base;
+      drawSprite(ctx, disc(base.r, look.fill, look.outline), b.x, b.y);
+    }
   }
+  drawTopFx(ctx, now);
 
   const me = game.players[localId];
   if (me) drawHud(ctx, me, input);
@@ -167,7 +189,17 @@ function drawWalls(ctx, game) {
 function drawPowerup(ctx, u) {
   const s = POWERUP_STYLE[u.type];
   drawSprite(ctx, disc(Math.round(POWERUP_RADIUS / PX), s.fill, s.outline, 2), u.x, u.y);
-  drawText(ctx, s.label, u.x + PX, u.y + PX, { color: '#ffffff', outline: s.outline, align: 'center', valign: 'middle' });
+  const icon = powerupIcon(u.type);
+  if (icon) drawSprite(ctx, icon, u.x, u.y);
+  else drawText(ctx, s.label, u.x + PX, u.y + PX, { color: '#ffffff', outline: s.outline, align: 'center', valign: 'middle' });
+}
+
+// Rocket: white nose, orange body, pointing where it flies.
+function drawRocket(ctx, b) {
+  const s = Math.hypot(b.vx, b.vy) || 1;
+  const ux = b.vx / s, uy = b.vy / s;
+  drawSprite(ctx, disc(2, '#fb923c', '#7c2d12'), b.x - ux * 5, b.y - uy * 5);
+  drawSprite(ctx, disc(2, '#ffffff', '#3f3f46'), b.x + ux * 3, b.y + uy * 3);
 }
 
 // ---- player sprite: a classic arrow mouse cursor ----
@@ -301,9 +333,14 @@ function drawPlayer(ctx, p, rules) {
 
 function drawHud(ctx, me, input) {
   if (!me.alive) return;
-  // Ammo, bottom-left.
+  // Ammo, bottom-left: the powerup weapon if you have one, otherwise the pistol magazine.
   const x = 16, y = ARENA.h - 12;
-  if (me.reloading > 0) {
+  if (me.weapon && me.weapon !== 'pistol') {
+    const s = POWERUP_STYLE[me.weapon];
+    const icon = powerupIcon(me.weapon);
+    ctx.drawImage(icon, x, y - 34, icon.width * PX * 2, icon.height * PX * 2);
+    drawText(ctx, `${s.label} ${me.weaponAmmo}`, x + icon.width * PX * 2 + 12, y, { size: 16, color: s.fill, valign: 'bottom' });
+  } else if (me.reloading > 0) {
     drawText(ctx, `RELOADING ${me.reloading.toFixed(1)}s`, x, y, { size: 16, color: '#facc15', valign: 'bottom' });
   } else {
     drawText(ctx, `${me.ammo} / ${MAG_SIZE}`, x, y, { size: 16, color: me.ammo <= 5 ? '#f87171' : '#e5e7eb', valign: 'bottom' });
@@ -333,6 +370,7 @@ export function renderBackdrop(ctx, seed) {
 // ---- match overlay: scoreboard, round, timer, countdown, banners ----
 
 export function renderMatchHud(ctx, match, localId) {
+  ctx.setTransform(1 / PX, 0, 0, 1 / PX, 0, 0);   // the HUD doesn't shake
   const game = match.game;
 
   // HUD blocks turn see-through while a player is underneath them (spawns sit in the corners).

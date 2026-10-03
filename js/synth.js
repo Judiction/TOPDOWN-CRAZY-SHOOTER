@@ -132,6 +132,61 @@ export const SFX = {
   pickup_ricochet: () => pickup(74),   // D5
   pickup_small: () => pickup(77),      // F5
   pickup_defense: () => pickup(79),    // G5
+  pickup_shotgun: () => pickup(67),    // G4 — weapons sit lower and meatier
+  pickup_uzi: () => pickup(69),        // A4
+  pickup_rocket: () => pickup(64),     // E4
+  pickup_eraser: () => pickup(84),     // C6
+  pickup_meteor: () => pickup(60),     // C4
+  // Shotgun: a fat burst of noise with a low square thump under it.
+  shotgun() {
+    const out = samples(0.2);
+    noise(out, { dur: 0.18, rate: sweep(6000, 1200, 0.18), vol: decay(0.18, 1.4, 0.6) });
+    tone(out, { dur: 0.12, duty: 0.5, freq: sweep(120, 45, 0.12), vol: decay(0.12, 1.2, 0.5) });
+    return out;
+  },
+  // Uzi: tiny, bright, clicky — it fires 16 times a second.
+  uzi() {
+    const out = samples(0.04);
+    tone(out, { dur: 0.035, duty: 0.125, freq: sweep(560, 300, 0.035), vol: decay(0.035, 1.5, 0.4) });
+    noise(out, { dur: 0.01, short: true, rate: 14000, vol: decay(0.01, 1, 0.25) });
+    return out;
+  },
+  // Rocket launch: rising whoosh with a growling pulse.
+  rocket() {
+    const out = samples(0.32);
+    noise(out, { dur: 0.3, rate: sweep(700, 5000, 0.3), vol: (t) => 0.45 * Math.min(1, t / 0.05) * (1 - t / 0.3) });
+    tone(out, { dur: 0.25, duty: 0.25, freq: sweep(90, 260, 0.25), vol: decay(0.25, 1, 0.3) });
+    return out;
+  },
+  // Rocket blast: crunchy noise boom with a falling triangle.
+  explode() {
+    const out = samples(0.4);
+    noise(out, { dur: 0.4, rate: sweep(4000, 200, 0.4), vol: decay(0.4, 1.4, 0.7) });
+    tone(out, { dur: 0.3, wave: 'triangle', freq: sweep(160, 35, 0.3), vol: decay(0.3, 1, 0.6) });
+    return out;
+  },
+  // Meteor impact: the biggest sound in the game — deep rumble + crack.
+  meteorBoom() {
+    const out = samples(0.6);
+    noise(out, { dur: 0.06, short: true, rate: 9000, vol: 0.7 });
+    noise(out, { dur: 0.6, rate: sweep(3000, 80, 0.6), vol: decay(0.6, 1.2, 0.75) });
+    tone(out, { dur: 0.5, wave: 'triangle', freq: sweep(110, 28, 0.5), vol: decay(0.5, 0.8, 0.75) });
+    return out;
+  },
+  // Meteor warning: one short beep per flash (they speed up as the circle grows).
+  meteorTick() {
+    const out = samples(0.03);
+    tone(out, { dur: 0.025, duty: 0.5, freq: midi(86), vol: decay(0.025, 0.5, 0.3) });
+    return out;
+  },
+  // Eraser: a sparkly downward sweep with hiss, like everything being wiped away.
+  erase() {
+    const out = samples(0.5);
+    tone(out, { dur: 0.45, duty: 0.125, freq: sweep(2400, 200, 0.45), vol: decay(0.45, 0.8, 0.3) });
+    tone(out, { t0: 0.03, dur: 0.42, duty: 0.25, freq: (t) => sweep(1800, 160, 0.42)(t) * (Math.floor(t * 40) % 2 ? 1.5 : 1), vol: decay(0.42, 1, 0.2) });
+    noise(out, { dur: 0.5, rate: sweep(16000, 3000, 0.5), vol: decay(0.5, 1, 0.25) });
+    return out;
+  },
   // A powerup appeared: soft two-note triangle "ding".
   spawn() {
     const out = samples(0.18);

@@ -14,6 +14,7 @@ const ri = Math.round;
 // ---- inputs (client → host) ----
 
 const BITS = ['up', 'down', 'left', 'right', 'click', 'draw', 'reload'];
+const BULLET_KINDS = ['pistol', 'pellet', 'uzi', 'rocket'];
 
 export function encodeInput(input) {
   let k = 0;
@@ -72,9 +73,10 @@ export function encodeSnapshot(match, { full, events, wallOps, acks }) {
     p: Object.values(g.players).map((p) => [
       p.id, ri(p.x), ri(p.y), r2(p.aim), p.hp, p.alive ? 1 : 0, p.ammo, r1(p.reloading), p.ink,
       r1(p.fat), r1(p.small), p.ricochet, p.shields, r2(p.orbit), p.hitCount,
-      p.pen ? [ri(p.pen.x), ri(p.pen.y)] : 0, acks[p.id] ?? 0,
+      p.pen ? [ri(p.pen.x), ri(p.pen.y)] : 0, acks[p.id] ?? 0, p.weapon, p.weaponAmmo,
     ]),
-    b: g.bullets.map((b) => [ri(b.x), ri(b.y), ri(b.vx), ri(b.vy), b.ricochet ? 1 : 0]),
+    b: g.bullets.map((b) => [ri(b.x), ri(b.y), ri(b.vx), ri(b.vy), b.ricochet ? 1 : 0, BULLET_KINDS.indexOf(b.kind)]),
+    m: g.meteors.map((m) => [m.id, ri(m.x), ri(m.y), m.r, r2(m.t), m.dur]),
     u: g.powerups.map((u) => [u.id, u.type, ri(u.x), ri(u.y)]),
     e: events,
     wo: wallOps,
@@ -119,7 +121,10 @@ export function applySnapshot(view, snap, myId) {
   }
 
   if (snap.wo?.length) {
-    for (let i = 0; i < snap.wo.length; i += 2) game.walls[snap.wo[i]] = snap.wo[i + 1];
+    for (let i = 0; i < snap.wo.length; i += 2) {
+      if (snap.wo[i] === -1) game.walls.fill(0);   // eraser
+      else game.walls[snap.wo[i]] = snap.wo[i + 1];
+    }
     game.wallsVersion++;
   }
 
@@ -131,7 +136,7 @@ export function applySnapshot(view, snap, myId) {
   let mine = null;
   const seen = new Set();
   for (const a of snap.p) {
-    const [id, x, y, aim, hp, alive, ammo, reloading, ink, fat, small, ricochet, shields, orbit, hitCount, pen, ack] = a;
+    const [id, x, y, aim, hp, alive, ammo, reloading, ink, fat, small, ricochet, shields, orbit, hitCount, pen, ack, weapon, weaponAmmo] = a;
     const p = game.players[id];
     if (!p) continue;                                // names/colors not known yet; next full snapshot fixes it
     seen.add(id);
@@ -147,13 +152,14 @@ export function applySnapshot(view, snap, myId) {
       p.aim = aim;
     }
     Object.assign(p, {
-      hp, alive: !!alive, ammo, reloading, ink, fat, small, ricochet, shields, orbit, hitCount,
+      hp, alive: !!alive, ammo, reloading, ink, fat, small, ricochet, shields, orbit, hitCount, weapon, weaponAmmo,
       pen: pen ? { x: pen[0], y: pen[1] } : null,
     });
   }
   for (const id of Object.keys(game.players)) if (!seen.has(id)) delete game.players[id];
 
-  game.bullets = snap.b.map(([x, y, vx, vy, ric]) => ({ x, y, vx, vy, ricochet: !!ric }));
+  game.bullets = snap.b.map(([x, y, vx, vy, ric, kind], i) => ({ id: i, x, y, vx, vy, ricochet: !!ric, kind: BULLET_KINDS[kind] ?? 'pistol' }));
+  game.meteors = snap.m.map(([id, x, y, r, t, dur]) => ({ id, x, y, r, t, dur }));
   game.powerups = snap.u.map(([id, type, x, y]) => ({ id, type, x, y }));
 
   for (const e of snap.e) game.events.push(e);
@@ -174,4 +180,5 @@ export function smoothRemotes(game, myId, dt) {
     b.x += b.vx * dt;
     b.y += b.vy * dt;
   }
+  for (const m of game.meteors) m.t = Math.min(m.dur, m.t + dt);   // keep the warning flashing smoothly
 }

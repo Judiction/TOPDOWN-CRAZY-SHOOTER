@@ -2,7 +2,7 @@
 // input a human sends (keys + cursor + buttons), so the rules treat bots and players identically.
 //
 // Behavior: chase the nearest enemy (preferring ones in sight) and strafe around them at mid range,
-// grab nearby powerups, fire in bursts with a little aim wobble, chew through walls that block the
+// grab nearby powerups, run out of meteor landing zones, fire in bursts with a little aim wobble, chew through walls that block the
 // shot, sometimes paint a cover wall between itself and the target, and wiggle free when stuck.
 
 import { ARENA, emptyInput, lineOfSight, POWERUP_RADIUS } from './game.js';
@@ -51,7 +51,12 @@ export function botInput(game, id, brain, dt) {
   // ---- movement ----
   let mx = 0, my = 0;
   const powerup = nearestPowerup(game, p, 260);
-  if (brain.unstick > 0) {
+  const danger = (game.meteors || []).find((m) => Math.hypot(p.x - m.x, p.y - m.y) < m.r + 40);
+  if (danger) {
+    // Get out of a meteor's landing zone.
+    mx = p.x - danger.x || 1;
+    my = p.y - danger.y;
+  } else if (brain.unstick > 0) {
     brain.unstick -= dt;
     mx = Math.cos(brain.unstickDir);
     my = Math.sin(brain.unstickDir);

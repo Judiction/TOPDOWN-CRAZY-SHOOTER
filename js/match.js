@@ -3,7 +3,10 @@
 //
 // Phases: countdown (3, 2, 1, frozen) → playing → roundEnd (banner) → next countdown ... → gameOver
 
-import { ARENA, createGame, addPlayer, step, emptyInput, emit, hurtPlayer } from './game.js';
+import {
+  ARENA, createGame, addPlayer, step, emptyInput, emit, hurtPlayer,
+  findFreeSpot, spawnPowerup, randomPowerupType, ROUND_START_POWERUPS,
+} from './game.js';
 import { gameRules } from './settings.js';
 
 export const COUNTDOWN = 3;            // seconds of "3, 2, 1"
@@ -54,6 +57,13 @@ function startRound(match) {
     const p = addPlayer(game, r.id, { name: r.name, color: r.color, x: spot.x, y: spot.y });
     p.aim = Math.atan2(H / 2 - spot.y, W / 2 - spot.x);
   });
+  // Every round starts with a few random powerups already on the map (unless the host turned them off).
+  if (game.rules.powerupInterval > 0) {
+    for (let i = 0; i < ROUND_START_POWERUPS; i++) {
+      const spot = findFreeSpot(game);
+      spawnPowerup(game, randomPowerupType(), spot.x, spot.y, { silent: true });
+    }
+  }
   Object.assign(match, {
     game,
     phase: 'countdown',

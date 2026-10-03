@@ -4,7 +4,7 @@
 // noisy sounds, and a cap on how many new sounds can start per frame.
 
 import { SFX, SR, renderMusic } from './synth.js';
-import { ARENA } from './game.js';
+import { ARENA, meteorFlashes } from './game.js';
 
 const VOLUME = { master: 0.8, music: 0.3, sfx: 0.55 };
 const PEN_VOLUME = 0.5;
@@ -12,10 +12,10 @@ const PAN_WIDTH = 0.6;                // how far left/right sounds pan with thei
 const MAX_NEW_SOUNDS_PER_FRAME = 12;
 
 // Group name → max overlapping voices (oldest is cut when full) and min seconds between starts.
-const LIMITS = { shoot: 8, hit: 6, wall: 4, bounce: 4, shield: 4, pickup: 3, death: 3 };
+const LIMITS = { shoot: 10, hit: 6, wall: 4, bounce: 4, shield: 4, pickup: 3, death: 3, explode: 4, meteorTick: 3 };
 const DEFAULT_LIMIT = 3;
 const MIN_GAP = { shoot: 0.012, wall: 0.025, bounce: 0.03, shield: 0.03 };
-const GROUP = { shootRicochet: 'shoot', shieldBreak: 'shield' };
+const GROUP = { shootRicochet: 'shoot', shotgun: 'shoot', uzi: 'shoot', rocket: 'shoot', shieldBreak: 'shield', meteorBoom: 'explode' };
 const groupOf = (name) => GROUP[name] || name.split('_')[0];
 
 let ctx = null;
@@ -73,7 +73,7 @@ function start() {
   sfxBus.gain.value = VOLUME.sfx;
   sfxBus.connect(master);
 
-  for (const [name, build] of Object.entries(SFX)) buffers[name] = toBuffer(build());
+  for (const [name, build] of Object.entries(SFX)) buffers[name] = toBuffer(limitPeak(build()));
 
   try {
     worker = new Worker(new URL('./music-worker.js', import.meta.url), { type: 'module' });
@@ -83,6 +83,14 @@ function start() {
   } catch {
     worker = null;                    // very old browser: render on the main thread instead
   }
+}
+
+// Layered sounds can sum past full scale; scale those down so nothing clips.
+function limitPeak(samples, max = 0.95) {
+  let peak = 0;
+  for (let i = 0; i < samples.length; i++) peak = Math.max(peak, Math.abs(samples[i]));
+  if (peak > max) for (let i = 0; i < samples.length; i++) samples[i] *= max / peak;
+  return samples;
 }
 
 function toBuffer(samples) {
@@ -134,7 +142,14 @@ const jitter = (amount) => 1 + (Math.random() * 2 - 1) * amount;
 
 function onEvent(e) {
   switch (e.type) {
-    case 'shoot': play(e.ricochet ? 'shootRicochet' : 'shoot', e.x, { rate: jitter(0.04), gain: 0.45 }); break;
+    case 'shoot': {
+      const name = e.w && e.w !== 'pistol' ? e.w : e.ricochet ? 'shootRicochet' : 'shoot';
+      play(name, e.x, { rate: jitter(0.04), gain: e.w === 'shotgun' ? 0.55 : 0.45 });
+      break;
+    }
+    case 'explode': play('explode', e.x, { rate: jitter(0.06), gain: 0.7 }); break;
+    case 'meteor': play('meteorBoom', e.x, { gain: 0.9 }); break;
+    case 'erase': play('erase', null, { gain: 0.7 }); break;
     case 'hit': play('hit', e.x, { rate: jitter(0.05), gain: 0.4 }); break;
     case 'death': play('death', e.x, { gain: 0.9 }); break;
     case 'pickup': play(`pickup_${e.kind}`, e.x, { gain: 0.6 }); break;
@@ -175,7 +190,25 @@ export function updateAudio(game) {
   }
 
   updatePens(game);
+  updateMeteorBeeps(game);
   updateMusic(game.bgSeed);
+}
+
+// ---- meteor warning beeps, in step with the flashing circle ----
+
+const meteorBeeps = new Map();        // meteor id -> flashes already beeped
+
+function updateMeteorBeeps(game) {
+  const live = new Set();
+  for (const m of game.meteors || []) {
+    live.add(m.id);
+    const n = meteorFlashes(m);
+    const prev = meteorBeeps.get(m.id) ?? n;
+    // Every second flash is the "white" one; beep on those, rising in pitch as impact nears.
+    if (n > prev && n % 2 === 1) play('meteorTick', m.x, { rate: 1 + Math.min(1, m.t / m.dur) * 0.6, gain: 0.5 });
+    meteorBeeps.set(m.id, n);
+  }
+  for (const id of meteorBeeps.keys()) if (!live.has(id)) meteorBeeps.delete(id);
 }
 
 // ---- pencil scratch: one looping voice per drawing player, volume follows pen speed ----
