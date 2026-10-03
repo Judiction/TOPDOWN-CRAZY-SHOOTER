@@ -175,12 +175,15 @@ export const SFX = {
     tone(out, { dur: 0.35, wave: 'triangle', freq: sweep(300, 40, 0.35), vol: decay(0.35, 1, 0.6) });
     return out;
   },
-  // Sniper: one sharp crack and a long faint echo.
+  // Sniper: a punchy little laser-blaster "pchew" — a fast falling zap with a wobble, an octave
+  // sub underneath, a sizzle on the attack and a short echo.
   sniper() {
-    const out = samples(0.4);
-    noise(out, { dur: 0.04, short: true, rate: 16000, vol: decay(0.04, 1, 0.7) });
-    tone(out, { dur: 0.08, duty: 0.5, freq: sweep(900, 180, 0.08), vol: decay(0.08, 1, 0.5) });
-    noise(out, { t0: 0.06, dur: 0.32, rate: sweep(3000, 400, 0.32), vol: decay(0.32, 1.5, 0.18) });
+    const out = samples(0.32);
+    const zap = (t) => sweep(2600, 260, 0.16)(t) * (1 + 0.08 * Math.sin(t * TAU * 55));
+    tone(out, { dur: 0.16, duty: 0.125, freq: zap, vol: decay(0.16, 0.9, 0.45) });
+    tone(out, { dur: 0.16, duty: 0.5, freq: (t) => zap(t) / 2, vol: decay(0.16, 1.2, 0.3) });
+    noise(out, { dur: 0.025, short: true, rate: 15000, vol: decay(0.025, 1, 0.4) });
+    tone(out, { t0: 0.11, dur: 0.16, duty: 0.125, freq: (t) => zap(t) * 0.9, vol: decay(0.16, 1, 0.12) });
     return out;
   },
   // Flamethrower: soft breathy noise puffs (it fires ~30 times a second).

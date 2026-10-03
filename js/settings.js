@@ -8,7 +8,7 @@ for (let i = 0; i < 16; i++) COLORS.push(hslToHex(i * 22.5 + 11, 0.9, 0.76));
 export const MAX_PLAYERS = 8;
 export const NAME_MAX = 12;
 
-export const INK_AMOUNTS = { small: 400, normal: 625, large: 900 };
+export const INK_AMOUNTS = { small: 650, normal: 1000, large: 1450 };
 
 export const DEFAULT_SETTINGS = {
   roundsToWin: 5,

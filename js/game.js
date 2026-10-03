@@ -16,9 +16,9 @@ export const BULLET_SPEED = 700;      // pistol bullet speed, px per second
 export const BULLET_RADIUS = 4;
 export const FIRE_COOLDOWN = 0.1;     // pistol: seconds between shots (10/sec)
 export const MAG_SIZE = 60;
-export const RELOAD_TIME = 3;         // seconds
+export const RELOAD_TIME = 2.4;       // seconds
 
-export const PEN_CAPACITY = 625;      // default ink (cells of 4x4) — roughly half a wall across the arena
+export const PEN_CAPACITY = 1000;     // default ink (cells of 4x4) — about 1.5 walls across the arena
 export const BRUSH_RADIUS = 7;        // px; walls are ~14px thick
 export const BREAK_RADIUS = 10;       // px of wall a bullet knocks out on impact
 const PAINT_CLEARANCE = 2;            // px kept free around every player and powerup
@@ -557,6 +557,7 @@ function fire(game, p, angle, speed, { kind = 'pistol', ricochet = false, range 
     bounces: ricochet ? RICOCHET_BOUNCES : 0,
     bounced: false,                   // a ricochet bullet can hurt its own shooter once it has bounced
     range,                            // px left before it fizzles (uzi)
+    travel: 0,                        // px flown so far (bullets fade yellow → red with distance)
     life: kind === 'rocket' ? ROCKET_LIFE : life,     // seconds left: rocket timeout, flame burnout, grenade fuse
   });
 }
@@ -617,6 +618,7 @@ function stepBullets(game, dt) {
       const px = b.x, py = b.y;
       b.x += (b.vx * dt) / sub;
       b.y += (b.vy * dt) / sub;
+      b.travel += (speed * dt) / sub;
       if (b.range !== Infinity) {
         b.range -= (speed * dt) / sub;
         if (b.range <= 0) return false;

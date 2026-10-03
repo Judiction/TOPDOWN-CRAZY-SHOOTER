@@ -76,7 +76,7 @@ export function encodeSnapshot(match, { full, events, wallOps, acks }) {
       p.pen ? [ri(p.pen.x), ri(p.pen.y)] : 0, acks[p.id] ?? 0, p.weapon, p.weaponAmmo,
       r1(p.ghost), r1(p.speed), r2(p.charging),
     ]),
-    b: g.bullets.map((b) => [ri(b.x), ri(b.y), ri(b.vx), ri(b.vy), b.ricochet ? 1 : 0, BULLET_KINDS.indexOf(b.kind)]),
+    b: g.bullets.map((b) => [ri(b.x), ri(b.y), ri(b.vx), ri(b.vy), b.ricochet ? 1 : 0, BULLET_KINDS.indexOf(b.kind), ri(b.travel)]),
     m: g.meteors.map((m) => [m.id, ri(m.x), ri(m.y), m.r, r2(m.t), m.dur]),
     // Map events in progress (null when inactive).
     fx: { blackout: g.blackout, gravity: g.gravity, mirror: g.mirror },
@@ -161,7 +161,7 @@ export function applySnapshot(view, snap, myId) {
   }
   for (const id of Object.keys(game.players)) if (!seen.has(id)) delete game.players[id];
 
-  game.bullets = snap.b.map(([x, y, vx, vy, ric, kind], i) => ({ id: i, x, y, vx, vy, ricochet: !!ric, kind: BULLET_KINDS[kind] ?? 'pistol' }));
+  game.bullets = snap.b.map(([x, y, vx, vy, ric, kind, travel], i) => ({ id: i, x, y, vx, vy, ricochet: !!ric, kind: BULLET_KINDS[kind] ?? 'pistol', travel }));
   game.meteors = snap.m.map(([id, x, y, r, t, dur]) => ({ id, x, y, r, t, dur }));
   game.blackout = snap.fx.blackout;
   game.gravity = snap.fx.gravity;
@@ -185,6 +185,7 @@ export function smoothRemotes(game, myId, dt) {
   for (const b of game.bullets) {
     b.x += b.vx * dt;
     b.y += b.vy * dt;
+    b.travel += Math.hypot(b.vx, b.vy) * dt;
   }
   for (const m of game.meteors) m.t = Math.min(m.dur, m.t + dt);   // keep the warning flashing smoothly
   for (const e of [game.blackout, game.gravity, game.mirror]) if (e) e.t = Math.min(e.dur, e.t + dt);

@@ -58,6 +58,16 @@ wallCanvas.height = ROWS;
 const wallCtx = wallCanvas.getContext('2d');
 const wallPixels = wallCtx.createImageData(COLS, ROWS);
 let wallsDrawnVersion = -1;
+let wallCount = 0;
+
+// Walls get moving white highlight bands: the walls are copied to a second small canvas each frame
+// and a sweeping gradient is painted only where wall pixels are ('source-atop'). Cheap — it's 320x180.
+const shineCanvas = document.createElement('canvas');
+shineCanvas.width = COLS;
+shineCanvas.height = ROWS;
+const shineCtx = shineCanvas.getContext('2d');
+const SHINE_BANDS = 3;                // highlight bands across the screen at once
+const SHINE_SPEED = 0.18;             // screen widths per second
 
 // Background art: rendered into a tiny canvas at ~30fps, then scaled up with no smoothing.
 const BG_FRAME_MS = 1000 / 30;
@@ -77,8 +87,7 @@ let bgLastDraw = -Infinity;
 const FLASH_MS = 300;
 const FLASH_STRENGTH = 0.3;           // peak opacity of the tint (1 = full color-dodge)
 const seenHits = {};                  // player id -> hit count already flashed for
-const hitAt = {};                     // player id -> when they were last hit (their cursor flashes white)
-const HIT_FLASH_MS = 140;
+const justHit = new Set();            // players hit this frame: their cursor flashes white for one frame
 let flash = null;                     // { color, start }
 
 // The canvas is VIEW_W x VIEW_H real pixels; CSS scales it up with nearest-neighbor (see style.css).
@@ -157,7 +166,10 @@ export function render(ctx, game, localId, input) {
     } else {
       const base = BULLET_STYLE[b.kind] || BULLET_STYLE.pistol;
       const look = b.ricochet ? BULLET_STYLE.ricochet : base;
-      drawSprite(ctx, disc(base.r, look.fill, look.outline), b.x, b.y);
+      // Pistol, shotgun and uzi rounds start pale yellow and burn down to red the farther they fly.
+      const fades = !b.ricochet && FADING.has(b.kind);
+      const fill = fades ? BULLET_FADE[Math.min(BULLET_FADE.length - 1, Math.floor((b.travel || 0) / 75))] : look.fill;
+      drawSprite(ctx, disc(base.r, fill, fades ? '#5c1a00' : look.outline), b.x, b.y);
       if (b.kind === 'grenade' && Math.floor(now / 120) % 2) drawSprite(ctx, disc(1, '#ffffff', null), b.x, b.y);
     }
   });
@@ -178,6 +190,8 @@ export function render(ctx, game, localId, input) {
 }
 
 const FLAME_COLORS = ['#fde047', '#fb923c', '#ef4444', '#fff7ae'];
+const FADING = new Set(['pistol', 'pellet', 'uzi']);
+const BULLET_FADE = ['#fffbd1', '#fff27a', '#ffd84d', '#ffb52e', '#ff8c1a', '#ff6417', '#ff3f1f', '#e0232a'];
 
 // SPEED BOOTS afterimages: recent positions of fast players.
 const trails = new Map();               // player id -> [{ x, y, aim, t }]
@@ -200,10 +214,11 @@ function drawBackground(ctx, seed) {
 
 function drawHitFlash(ctx, game) {
   const now = performance.now();
+  justHit.clear();
   for (const p of Object.values(game.players)) {
     if (p.hitCount > (seenHits[p.id] ?? p.hitCount)) {
       flash = { color: p.color, start: now };
-      hitAt[p.id] = now;
+      justHit.add(p.id);
     }
     seenHits[p.id] = p.hitCount;
   }
@@ -227,6 +242,7 @@ function drawWalls(ctx, game) {
     const colors = {};
     for (const p of Object.values(game.players)) colors[p.slot] = hexToRgb(p.color);
     const d = wallPixels.data;
+    let count = 0;
     for (let i = 0; i < game.walls.length; i++) {
       const o = i * 4;
       const slot = game.walls[i];
@@ -235,11 +251,27 @@ function drawWalls(ctx, game) {
       d[o + 1] = rgb[1];
       d[o + 2] = rgb[2];
       d[o + 3] = slot ? 255 : 0;
+      if (slot) count++;
     }
     wallCtx.putImageData(wallPixels, 0, 0);
     wallsDrawnVersion = game.wallsVersion;
+    wallCount = count;
   }
-  ctx.drawImage(wallCanvas, 0, 0, ARENA.w, ARENA.h);
+  if (!wallCount) return;
+  shineCtx.globalCompositeOperation = 'copy';
+  shineCtx.drawImage(wallCanvas, 0, 0);
+  shineCtx.globalCompositeOperation = 'source-atop';
+  const t = performance.now() / 1000;
+  const grad = shineCtx.createLinearGradient(0, 0, COLS, ROWS * 0.6);
+  for (let i = 0; i <= 32; i++) {
+    const p = i / 32;
+    const wave = Math.sin((p * SHINE_BANDS - t * SHINE_SPEED * SHINE_BANDS) * Math.PI * 2);
+    const a = wave > 0 ? 0.55 * wave ** 6 + 0.08 * wave : 0;      // sharp bright stripes, soft sheen around them
+    grad.addColorStop(p, `rgba(255,255,255,${a.toFixed(3)})`);
+  }
+  shineCtx.fillStyle = grad;
+  shineCtx.fillRect(0, 0, COLS, ROWS);
+  ctx.drawImage(shineCanvas, 0, 0, ARENA.w, ARENA.h);
 }
 
 function drawPowerup(ctx, u) {
@@ -362,7 +394,7 @@ function drawPlayer(ctx, p, rules, isMe, now) {
   // Your own ghost shows as a faint flicker so you know where you are; others don't see you at all.
   ctx.globalAlpha = !p.alive ? 0.25 : p.ghost > 0 ? (Math.floor(now / 90) % 2 ? 0.3 : 0.45) : 1;
   // Just got hit: the whole cursor flashes white.
-  const hit = p.alive && now - (hitAt[p.id] ?? -Infinity) < HIT_FLASH_MS;
+  const hit = p.alive && justHit.has(p.id);
   drawCursor(ctx, p.x, p.y, p.aim, r, hit ? '#ffffff' : p.color);
   ctx.globalAlpha = 1;
 
