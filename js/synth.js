@@ -121,11 +121,13 @@ export const SFX = {
     tone(out, { dur: 0.1, duty: 0.5, freq: sweep(620, 160, 0.1), vol: decay(0.1, 1.2, 0.4) });
     return out;
   },
-  // Elimination: falling noise rumble + triangle dive.
+  // Elimination: the player explodes — a sharp crack, a big noise boom and a deep triangle drop.
   death() {
-    const out = samples(0.35);
-    noise(out, { dur: 0.35, rate: sweep(5000, 300, 0.35), vol: decay(0.35, 1.3, 0.5) });
-    tone(out, { dur: 0.32, wave: 'triangle', freq: sweep(330, 40, 0.32), vol: decay(0.32, 1, 0.45) });
+    const out = samples(0.65);
+    noise(out, { dur: 0.05, short: true, rate: 10000, vol: 0.7 });
+    noise(out, { dur: 0.65, rate: sweep(3500, 70, 0.65), vol: decay(0.65, 1.1, 0.8) });
+    tone(out, { dur: 0.55, wave: 'triangle', freq: sweep(140, 26, 0.55), vol: decay(0.55, 0.8, 0.8) });
+    tone(out, { dur: 0.12, duty: 0.5, freq: sweep(220, 50, 0.12), vol: decay(0.12, 1, 0.4) });
     return out;
   },
   pickup_fat: () => pickup(72),        // C5

@@ -161,7 +161,7 @@ function onEvent(e) {
     case 'mirror':
     case 'inkstorm': play(e.type, null, { gain: 0.75 }); break;
     case 'hit': play('hit', e.x, { rate: jitter(0.05), gain: 0.4 }); break;
-    case 'death': play('death', e.x, { gain: 0.9 }); break;
+    case 'death': play('death', e.x, { gain: 1 }); break;
     case 'pickup': play(`pickup_${e.kind}`, e.x, { gain: 0.6 }); break;
     case 'spawn': play('spawn', e.x, { gain: 0.6 }); break;
     case 'wall': play('wall', e.x, { rate: jitter(0.12), gain: 0.55 }); break;

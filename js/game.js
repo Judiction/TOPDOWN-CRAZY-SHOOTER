@@ -84,6 +84,8 @@ export const SPEED_DURATION = 10;
 export const SPEED_MULT = 1.68;
 export const MEDKIT_HEAL = 5;
 export const KILL_HEAL = 5;          // eliminating someone heals you this much
+export const DEATH_BLAST_RADIUS = 90;  // every player explodes when they die...
+export const DEATH_BLAST_DAMAGE = 2;  // ...hurting everyone caught in it and destroying walls
 export const BLACKOUT_DURATION = 8;
 export const GRAVITY_DURATION = 6;
 const GRAVITY_PULL = 40000;           // pull speed = GRAVITY_PULL / distance (px/s), capped below
@@ -761,8 +763,21 @@ export function hurtPlayer(game, p, amount = 1, by = null) {
     emit(game, 'death', { x: p.x, y: p.y, by });
     const killer = by && by !== p.id ? game.players[by] : null;
     if (killer?.alive) healPlayer(game, killer, KILL_HEAL);
+    deathBlast(game, p, by);
   } else {
     emit(game, 'hit', { x: p.x, y: p.y });
+  }
+}
+
+// A dying player blows up: walls in the circle are destroyed and everyone else inside or touching it
+// takes damage. Kills it causes (chain reactions!) count for whoever got the original kill.
+function deathBlast(game, p, by) {
+  const r = DEATH_BLAST_RADIUS;
+  emit(game, 'deathBlast', { x: p.x, y: p.y, r, color: p.color });
+  chip(game, p.x, p.y, breakWall(game, p.x, p.y, r), true);
+  for (const o of Object.values(game.players)) {
+    if (o === p || !o.alive) continue;
+    if (Math.hypot(o.x - p.x, o.y - p.y) <= r + playerRadius(o)) hurtPlayer(game, o, DEATH_BLAST_DAMAGE, by);
   }
 }
 

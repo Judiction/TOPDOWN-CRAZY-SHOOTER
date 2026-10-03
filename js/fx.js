@@ -16,6 +16,7 @@ const floats = [];                    // small text over a player: { pid, text, 
 let shake = { until: 0, amp: 0, dur: 1 };
 let whiteFlash = null;                // { start, dur }
 let invertFlash = null;
+let redFlash = null;                  // background flash when a player dies
 let storm = null;                     // { start }
 let erase = null;                     // { start, cells: Int32Array, thresholds: Float32Array }
 let seenEventId = null;
@@ -98,6 +99,10 @@ export function updateFx(game, now, wallImage, localId) {
       booms.push({ x: e.x, y: e.y, r: e.r * 1.1, start: now, dur: 650 });
       whiteFlash = { start: now, dur: 450 };
       addShake(now, 10, 450);
+    } else if (e.type === 'deathBlast') {
+      booms.push({ x: e.x, y: e.y, r: e.r, start: now, dur: 600, red: true });
+      redFlash = { start: now, dur: 500 };
+      addShake(now, 9, 380);
     } else if (e.type === 'erase') {
       startErase(now, wallImage);
       invertFlash = { start: now, dur: 650 };
@@ -182,6 +187,18 @@ function startErase(now, wallImage) {
 
 // After the background: the ERASER's inverted flash, and INK STORM lightning.
 export function drawBackgroundFx(ctx, now) {
+  if (redFlash) {
+    const k = (now - redFlash.start) / redFlash.dur;
+    if (k >= 1) redFlash = null;
+    else {
+      ctx.save();
+      ctx.globalCompositeOperation = 'screen';
+      ctx.globalAlpha = 0.9 * (1 - k) ** 2;
+      ctx.fillStyle = '#ff1a1a';
+      ctx.fillRect(0, 0, ARENA.w, ARENA.h);
+      ctx.restore();
+    }
+  }
   if (invertFlash) {
     const k = (now - invertFlash.start) / invertFlash.dur;
     if (k >= 1) invertFlash = null;
@@ -371,7 +388,9 @@ export function drawTopFx(ctx, now) {
     }
     const grow = 1 - (1 - k) ** 3;
     const r = Math.max(1, Math.round((b.r * (0.3 + 0.7 * grow)) / PX));
-    const fill = k < 0.25 ? '#ffffff' : k < 0.55 ? '#fde047' : '#fb923c';
+    const fill = b.red
+      ? k < 0.2 ? '#ffffff' : k < 0.5 ? '#fb7185' : '#dc2626'
+      : k < 0.25 ? '#ffffff' : k < 0.55 ? '#fde047' : '#fb923c';
     ctx.globalAlpha = 0.85 * (1 - k);
     drawSprite(ctx, disc(r, fill, null), b.x, b.y);
     ctx.globalAlpha = 1 - k;

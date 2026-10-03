@@ -31,7 +31,7 @@ Want to play solo or fill empty seats? The host can **+ ADD BOT** in the lobby.
 ## Rules
 
 - **Rounds:** each round starts with a 5-second countdown. The last player alive wins the round. The first player to reach the host's number of round wins takes the game.
-- **Health:** you die after 10 hits. The host can change this. Eliminating a player heals you 5 HP.
+- **Health:** you die after 10 hits. The host can change this. Eliminating a player heals you 5 HP. Players explode when they die: everyone caught in the blast takes 2 damage and nearby walls are destroyed, so watch out for chain reactions.
 - **Ammo:** 60 bullets per magazine. A reload takes 2.4 seconds.
 - **Sudden death:** if the round timer runs out, everyone slowly loses health until one player is left.
 
