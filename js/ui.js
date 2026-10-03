@@ -12,7 +12,7 @@ function el(html) {
   return t.content.firstElementChild;
 }
 
-// handlers: onHost(name), onJoin(name, code), onAction(action), onStart(), onLeave(),
+// handlers: onHost(name), onJoin(name, code), onAction(action), onStart(), onLeave(), onCopy(),
 //           onPlayAgain(), onMenu(), onResume(), onEndMatch(), onClick()
 export function createUI(root, handlers) {
   let screen = null;
@@ -78,7 +78,7 @@ export function createUI(root, handlers) {
       <div class="panel lobby">
         <div class="lobby-head">
           <h2>LOBBY</h2>
-          <div class="code">ROOM <b id="ui-room"></b></div>
+          <div class="code">ROOM <b id="ui-room"></b> <button data-act="copy" id="ui-copy">COPY INVITE LINK</button></div>
         </div>
         <div class="lobby-cols">
           <section>
@@ -116,6 +116,7 @@ export function createUI(root, handlers) {
         const next = def.options[(i + Number(d.dir) + def.options.length) % def.options.length];
         handlers.onAction({ type: 'setting', key: d.key, value: next });
       } else if (d.act === 'start') handlers.onStart();
+      else if (d.act === 'copy') handlers.onCopy();
       else if (d.act === 'leave') handlers.onLeave();
     });
     n.querySelector('#ui-lname').addEventListener('input', (e) => handlers.onAction({ type: 'name', name: e.target.value }));
@@ -125,14 +126,18 @@ export function createUI(root, handlers) {
 
   let lastRoom = null;
 
+  let lastLocalId = null;
+
   function updateLobby(room, localId) {
     lastRoom = room;
+    lastLocalId = localId;
     if (screen !== 'lobby') return;
     const isHost = room.hostId === localId;
     const me = room.players.find((p) => p.id === localId);
     const $ = (sel) => root.querySelector(sel);
 
-    $('#ui-room').textContent = room.code || 'OFFLINE';
+    $('#ui-room').textContent = room.code || 'CONNECTING...';
+    $('#ui-copy').hidden = !room.code || room.code === 'OFFLINE';
     $('#ui-count').textContent = `${room.players.length}/${MAX_PLAYERS}`;
     $('#ui-players').innerHTML = room.players
       .map((p) => {
@@ -167,7 +172,7 @@ export function createUI(root, handlers) {
     start.hidden = !isHost;
     start.disabled = !canStart(room);
     $('#ui-status').textContent = !isHost
-      ? 'WAITING FOR THE HOST TO START'
+      ? room.inMatch ? 'GAME IN PROGRESS. YOU PLAY IN THE NEXT ONE!' : 'WAITING FOR THE HOST TO START'
       : room.players.length < 2
         ? 'ADD A BOT OR WAIT FOR FRIENDS'
         : '';
@@ -214,5 +219,13 @@ export function createUI(root, handlers) {
     show(n, 'gameover');
   }
 
-  return { showTitle, setMessage, showLobby, updateLobby, showPause, showGameOver, hide, get screen() { return screen; } };
+  // Short message in the lobby status line (e.g. "LINK COPIED").
+  function flashStatus(text) {
+    const el = root.querySelector('#ui-status');
+    if (!el) return;
+    el.textContent = text;
+    setTimeout(() => lastRoom && updateLobby(lastRoom, lastLocalId), 1500);
+  }
+
+  return { showTitle, setMessage, flashStatus, showLobby, updateLobby, showPause, showGameOver, hide, get screen() { return screen; } };
 }

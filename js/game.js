@@ -53,6 +53,7 @@ export function createGame(rules = {}, { firstEventId = 1 } = {}) {
     nextBulletId: 1,
     walls: new Uint8Array(COLS * ROWS),
     wallsVersion: 0,                  // bumped on every wall change, so renderers know to redraw
+    wallLog: null,                    // host sets this to an array to record [cell, value] changes for syncing
     powerups: [],
     nextPowerupId: 1,
     powerupTimer: r.powerupInterval,
@@ -132,6 +133,18 @@ export function emit(game, type, data) {
   game.events.push({ id: game.nextEventId++, type, ...data });
 }
 
+// WASD movement with wall collision. Exported so clients can predict their own movement locally.
+export function applyMovement(game, p, input, dt) {
+  let dx = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+  let dy = (input.down ? 1 : 0) - (input.up ? 1 : 0);
+  const len = Math.hypot(dx, dy);
+  if (len > 0) {
+    dx /= len;
+    dy /= len;
+  }
+  movePlayer(game, p, dx * PLAYER_SPEED * dt, dy * PLAYER_SPEED * dt);
+}
+
 export function step(game, inputs, dt) {
   if (game.events.length > MAX_EVENTS) game.events.splice(0, game.events.length - MAX_EVENTS);
 
@@ -143,14 +156,7 @@ export function step(game, inputs, dt) {
     p.small = Math.max(0, p.small - dt);
     if (p.shields) p.orbit = (p.orbit + SHIELD_SPIN * dt) % (Math.PI * 2);
 
-    let dx = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-    let dy = (input.down ? 1 : 0) - (input.up ? 1 : 0);
-    const len = Math.hypot(dx, dy);
-    if (len > 0) {
-      dx /= len;
-      dy /= len;
-    }
-    movePlayer(game, p, dx * PLAYER_SPEED * dt, dy * PLAYER_SPEED * dt);
+    applyMovement(game, p, input, dt);
     p.aim = Math.atan2(input.my - p.y, input.mx - p.x);
     collectPowerups(game, p);
 
@@ -371,6 +377,7 @@ function breakWall(game, x, y) {
     if (!slot) return;
     if (((c + 0.5) * CELL - x) ** 2 + ((r + 0.5) * CELL - y) ** 2 > BREAK_RADIUS * BREAK_RADIUS) return;
     game.walls[idx] = 0;
+    game.wallLog?.push(idx, 0);
     const drawer = owners[slot];
     if (drawer) drawer.ink = Math.min(game.rules.penCapacity, drawer.ink + 1);
     changed = true;
@@ -412,6 +419,7 @@ function paintDot(game, painter, x, y) {
     if (((c + 0.5) * CELL - x) ** 2 + ((r + 0.5) * CELL - y) ** 2 > brush * brush) return;
     if (keepClear.some((k) => circleOverlapsCell(k.x, k.y, k.r + PAINT_CLEARANCE, c, r))) return;
     game.walls[idx] = painter.slot;
+    game.wallLog?.push(idx, painter.slot);
     painter.ink -= 1;
     changed = true;
   });
