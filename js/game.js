@@ -10,7 +10,7 @@ export const ROWS = ARENA.h / CELL;
 
 export const PLAYER_RADIUS = 18;
 export const PLAYER_SPEED = 260;      // px per second
-export const MAX_HP = 10;             // hits to die
+export const MAX_HP = 10;             // default hits to die (host can change it: game.rules.maxHp)
 
 export const BULLET_SPEED = 700;      // px per second
 export const BULLET_RADIUS = 4;
@@ -18,7 +18,7 @@ export const FIRE_COOLDOWN = 0.1;     // seconds between shots (10/sec)
 export const MAG_SIZE = 60;
 export const RELOAD_TIME = 3;         // seconds
 
-export const PEN_CAPACITY = 625;      // ink (cells of 4x4) — roughly half a wall across the arena
+export const PEN_CAPACITY = 625;      // default ink (cells of 4x4) — roughly half a wall across the arena
 export const BRUSH_RADIUS = 7;        // px; walls are ~14px thick
 export const BREAK_RADIUS = 10;       // px of wall a bullet knocks out on impact
 const PAINT_CLEARANCE = 2;            // px kept free around every player and powerup
@@ -26,7 +26,7 @@ const PAINT_CLEARANCE = 2;            // px kept free around every player and po
 // ---- powerups ----
 export const POWERUP_TYPES = ['fat', 'ricochet', 'small', 'defense'];
 export const POWERUP_RADIUS = 20;
-export const POWERUP_INTERVAL = 30;   // seconds between random spawns
+export const POWERUP_INTERVAL = 30;   // default seconds between random spawns (0 = powerups off)
 export const MAX_POWERUPS = 6;        // no new spawns while this many are on the map
 export const FAT_DURATION = 15;       // seconds of 2x brush
 export const SMALL_DURATION = 15;     // seconds at half size
@@ -38,8 +38,16 @@ export const SHIELD_RADIUS = 5;
 export const SHIELD_ORBIT = 14;       // px beyond the player's edge
 export const SHIELD_SPIN = 4;         // radians per second
 
-export function createGame() {
+// rules: the host's settings that change the simulation. firstEventId lets event ids keep rising
+// across rounds, so listeners never mistake a new round's events for ones they already handled.
+export function createGame(rules = {}, { firstEventId = 1 } = {}) {
+  const r = {
+    maxHp: rules.maxHp ?? MAX_HP,
+    penCapacity: rules.penCapacity ?? PEN_CAPACITY,
+    powerupInterval: rules.powerupInterval ?? POWERUP_INTERVAL,
+  };
   return {
+    rules: r,
     players: {},
     bullets: [],
     nextBulletId: 1,
@@ -47,11 +55,11 @@ export function createGame() {
     wallsVersion: 0,                  // bumped on every wall change, so renderers know to redraw
     powerups: [],
     nextPowerupId: 1,
-    powerupTimer: POWERUP_INTERVAL,
+    powerupTimer: r.powerupInterval,
     // Recent things that happened (shots, hits, pickups...), for sounds. Each has a rising id so
     // listeners (and later, remote players) can tell which ones they've already handled.
     events: [],
-    nextEventId: 1,
+    nextEventId: firstEventId,
     bgSeed: newBackgroundSeed(),      // picks this round's background art; the host will send it to everyone
   };
 }
@@ -77,12 +85,12 @@ export function respawnPlayer(game, id, x, y) {
   Object.assign(p, {
     x, y,
     aim: 0,
-    hp: MAX_HP,
+    hp: game.rules.maxHp,
     alive: true,
     cooldown: 0,
     ammo: MAG_SIZE,
     reloading: 0,                     // seconds left; 0 = not reloading
-    ink: PEN_CAPACITY,
+    ink: game.rules.penCapacity,
     pen: null,                        // last pen point while a stroke is in progress
     fat: 0,                           // seconds of FAT WALLS left
     small: 0,                         // seconds of GET SMALL left
@@ -120,7 +128,7 @@ export function emptyInput() {
 
 const MAX_EVENTS = 128;
 
-function emit(game, type, data) {
+export function emit(game, type, data) {
   game.events.push({ id: game.nextEventId++, type, ...data });
 }
 
@@ -171,9 +179,9 @@ export function step(game, inputs, dt) {
 
   stepBullets(game, dt);
 
-  game.powerupTimer -= dt;
-  if (game.powerupTimer <= 0) {
-    game.powerupTimer += POWERUP_INTERVAL;
+  if (game.rules.powerupInterval > 0) game.powerupTimer -= dt;
+  if (game.rules.powerupInterval > 0 && game.powerupTimer <= 0) {
+    game.powerupTimer += game.rules.powerupInterval;
     if (game.powerups.length < MAX_POWERUPS) {
       const type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
       const spot = findFreeSpot(game);
@@ -312,21 +320,37 @@ function stepBullets(game, dt) {
         // Bullets never ricochet off players — they just hit.
         const r = playerRadius(p) + BULLET_RADIUS;
         if ((p.x - b.x) ** 2 + (p.y - b.y) ** 2 <= r * r) {
-          p.hp -= 1;
-          p.hitCount += 1;
-          if (p.hp <= 0) {
-            p.hp = 0;
-            p.alive = false;
-            emit(game, 'death', { x: p.x, y: p.y });
-          } else {
-            emit(game, 'hit', { x: p.x, y: p.y });
-          }
+          hurtPlayer(game, p);
           return false;
         }
       }
     }
     return true;
   });
+}
+
+// Takes one hit point away (bullets, sudden death).
+export function hurtPlayer(game, p) {
+  if (!p.alive) return;
+  p.hp -= 1;
+  p.hitCount += 1;
+  if (p.hp <= 0) {
+    p.hp = 0;
+    p.alive = false;
+    emit(game, 'death', { x: p.x, y: p.y });
+  } else {
+    emit(game, 'hit', { x: p.x, y: p.y });
+  }
+}
+
+// True if nothing painted blocks the straight line between two points (used by bots).
+export function lineOfSight(game, x1, y1, x2, y2) {
+  const steps = Math.ceil(Math.hypot(x2 - x1, y2 - y1) / CELL);
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps;
+    if (wallAt(game, x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)) return false;
+  }
+  return true;
 }
 
 function bounce(b, px, py) {
@@ -338,7 +362,7 @@ function bounce(b, px, py) {
 
 // Knocks out wall cells around the impact. Anyone can break any wall, but each broken cell's ink
 // always goes back to the player who drew it. A drawer's ink + their cells on the map never exceeds
-// PEN_CAPACITY, so there's always room; the cap is just a safety net. Ink from a player who left is lost.
+// their pen capacity, so there's always room; the cap is just a safety net. Ink from a player who left is lost.
 function breakWall(game, x, y) {
   const owners = playersBySlot(game);
   let changed = false;
@@ -348,7 +372,7 @@ function breakWall(game, x, y) {
     if (((c + 0.5) * CELL - x) ** 2 + ((r + 0.5) * CELL - y) ** 2 > BREAK_RADIUS * BREAK_RADIUS) return;
     game.walls[idx] = 0;
     const drawer = owners[slot];
-    if (drawer) drawer.ink = Math.min(PEN_CAPACITY, drawer.ink + 1);
+    if (drawer) drawer.ink = Math.min(game.rules.penCapacity, drawer.ink + 1);
     changed = true;
   });
   if (changed) game.wallsVersion++;

@@ -179,6 +179,50 @@ export const SFX = {
     tone(out, { t0: 0.035, dur: 0.05, duty: 0.25, freq: midi(83), vol: decay(0.05, 1, 0.28) });
     return out;
   },
+  // Countdown "3, 2, 1": square beep, then a higher, longer one for GO!
+  count() {
+    const out = samples(0.13);
+    tone(out, { dur: 0.12, duty: 0.5, freq: midi(69), vol: decay(0.12, 0.6, 0.35) });
+    return out;
+  },
+  go() {
+    const out = samples(0.32);
+    tone(out, { dur: 0.04, duty: 0.25, freq: midi(81), vol: 0.35 });
+    tone(out, { t0: 0.04, dur: 0.28, duty: 0.5, freq: midi(81), vol: decay(0.28, 0.8, 0.35) });
+    tone(out, { t0: 0.04, dur: 0.28, wave: 'triangle', freq: midi(69), vol: decay(0.28, 1, 0.4) });
+    return out;
+  },
+  // Round timer ran out: low two-tone alarm.
+  suddenDeath() {
+    const out = samples(0.4);
+    for (let i = 0; i < 4; i++) tone(out, { t0: i * 0.1, dur: 0.09, duty: 0.25, freq: midi(i % 2 ? 57 : 62), vol: 0.3 });
+    return out;
+  },
+  // Round won: quick bright three-note jingle.
+  roundEnd() {
+    const out = samples(0.36);
+    [72, 76, 79].forEach((n, i) => tone(out, { t0: i * 0.07, dur: 0.07, duty: 0.25, freq: midi(n), vol: 0.32 }));
+    tone(out, { t0: 0.21, dur: 0.15, duty: 0.5, freq: midi(84), vol: decay(0.15, 1, 0.32) });
+    return out;
+  },
+  // Game won: short fanfare with a triangle bass under it.
+  gameOver() {
+    const out = samples(0.75);
+    const notes = [[72, 0.09], [72, 0.09], [72, 0.09], [79, 0.18], [76, 0.09], [84, 0.21]];
+    let t0 = 0;
+    for (const [n, d] of notes) {
+      tone(out, { t0, dur: d * 0.92, duty: 0.25, freq: midi(n), vol: 0.32 });
+      tone(out, { t0, dur: d * 0.92, wave: 'triangle', freq: midi(n - 24), vol: 0.35 });
+      t0 += d;
+    }
+    return out;
+  },
+  // Menu button.
+  ui() {
+    const out = samples(0.035);
+    tone(out, { dur: 0.03, duty: 0.125, freq: midi(88), vol: decay(0.03, 1, 0.25) });
+    return out;
+  },
   // Pencil scratch "shrrrr", played as a loop while someone draws: bright hiss with random grain
   // bursts (the paper's texture), high-passed so it's papery rather than rumbly.
   pen() {

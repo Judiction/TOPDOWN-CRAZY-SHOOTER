@@ -40,7 +40,7 @@ export function initAudio() {
   window.addEventListener('pointerdown', unlock);
   window.addEventListener('keydown', unlock);
   window.addEventListener('keydown', (e) => {
-    if (e.code === 'KeyM') setMuted(!muted);
+    if (e.code === 'KeyM' && !(e.target instanceof HTMLInputElement)) setMuted(!muted);
   });
 }
 
@@ -144,10 +144,20 @@ function onEvent(e) {
     case 'shield': play(e.broke ? 'shieldBreak' : 'shield', e.x, { rate: jitter(0.05), gain: 0.7 }); break;
     case 'reload': play('reload', e.x, { gain: 0.5 }); break;
     case 'reloaded': play('reloaded', e.x, { gain: 0.5 }); break;
+    case 'countdown': play('count', null, { gain: 0.6 }); break;
+    case 'go': play('go', null, { gain: 0.6 }); break;
+    case 'suddenDeath': play('suddenDeath', null, { gain: 0.6 }); break;
+    case 'roundEnd': play('roundEnd', null, { gain: 0.6 }); break;
+    case 'gameOver': play('gameOver', null, { gain: 0.6 }); break;
   }
 }
 
 // Call once per frame.
+// Menu button blip.
+export function playUi() {
+  if (ctx && ctx.state === 'running') play('ui', null, { gain: 0.5 });
+}
+
 export function updateAudio(game) {
   const events = game.events;
   const newest = events.length ? events[events.length - 1].id : 0;

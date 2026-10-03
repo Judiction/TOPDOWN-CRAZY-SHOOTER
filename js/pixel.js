@@ -133,11 +133,12 @@ function touches(on, w, h, x, y) {
   return false;
 }
 
-// align: 'left' | 'center'; valign: 'top' | 'middle' | 'bottom'
-export function drawText(ctx, str, x, y, { size = 8, color = '#ffffff', outline = '#000000', align = 'left', valign = 'top' } = {}) {
+// align: 'left' | 'center' | 'right'; valign: 'top' | 'middle' | 'bottom'.
+// scale blows the pixels up (whole numbers keep it crisp) for big headline text.
+export function drawText(ctx, str, x, y, { size = 8, color = '#ffffff', outline = '#000000', align = 'left', valign = 'top', scale = 1 } = {}) {
   const img = textSprite(str, size, color, outline);
-  const w = img.width * PX, h = img.height * PX;
-  const left = align === 'center' ? x - w / 2 : x;
+  const w = img.width * PX * scale, h = img.height * PX * scale;
+  const left = align === 'center' ? x - w / 2 : align === 'right' ? x - w : x;
   const top = valign === 'middle' ? y - h / 2 : valign === 'bottom' ? y - h : y;
   ctx.drawImage(img, snap(left), snap(top), w, h);
 }

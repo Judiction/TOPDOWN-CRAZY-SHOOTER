@@ -7,6 +7,7 @@ const mouse = { x: 0, y: 0, down: false };
 
 export function initInput(canvas) {
   window.addEventListener('keydown', (e) => {
+    if (isTyping(e)) return;                    // typing a name isn't moving or drawing
     if (e.code === 'Space') e.preventDefault(); // stop the page from scrolling
     keys.add(e.code);
   });
@@ -29,6 +30,10 @@ export function initInput(canvas) {
     if (e.button === 0) mouse.down = false;
   });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+export function isTyping(e) {
+  return e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
 }
 
 // Snapshot of the local player's controls. This is exactly what a client will send to the host.

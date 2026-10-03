@@ -1,5 +1,5 @@
 import {
-  ARENA, COLS, ROWS, BULLET_RADIUS, MAX_HP, MAG_SIZE, RELOAD_TIME, PEN_CAPACITY,
+  ARENA, COLS, ROWS, BULLET_RADIUS, MAG_SIZE, RELOAD_TIME,
   POWERUP_RADIUS, FAT_DURATION, SMALL_DURATION, SHIELD_RADIUS, SHIELD_HITS,
   playerRadius, brushRadius, shieldPositions,
 } from './game.js';
@@ -62,6 +62,8 @@ export function initCanvas(canvas) {
     const scale = max >= 1 ? Math.floor(max) : max;
     canvas.style.width = `${(VIEW_W * scale) / dpr}px`;
     canvas.style.height = `${(VIEW_H * scale) / dpr}px`;
+    // Menus size themselves in game pixels via this CSS variable.
+    canvas.parentElement.style.setProperty('--px', `${scale / dpr}px`);
   };
   window.addEventListener('resize', fit);
   fit();
@@ -69,10 +71,18 @@ export function initCanvas(canvas) {
 }
 
 // localId = whose HUD to show; input = their current controls (for the pen cursor).
+let lastGame = null;
+
 export function render(ctx, game, localId, input) {
   // Everything below is in arena units; this maps them onto the half-resolution canvas.
   ctx.setTransform(1 / PX, 0, 0, 1 / PX, 0, 0);
   ctx.imageSmoothingEnabled = false;
+  if (game !== lastGame) {
+    // New round = fresh game state: forget what we'd drawn and flashed for the old one.
+    lastGame = game;
+    wallsDrawnVersion = -1;
+    for (const id of Object.keys(seenHits)) delete seenHits[id];
+  }
 
   drawBackground(ctx, game.bgSeed);
   drawHitFlash(ctx, game);
@@ -85,7 +95,7 @@ export function render(ctx, game, localId, input) {
   rect(ctx, ARENA.w - PX * 2, 0, PX * 2, ARENA.h, border);
 
   for (const u of game.powerups) drawPowerup(ctx, u);
-  for (const p of Object.values(game.players)) drawPlayer(ctx, p);
+  for (const p of Object.values(game.players)) drawPlayer(ctx, p, game.rules);
 
   const br = Math.round(BULLET_RADIUS / PX);
   for (const b of game.bullets) {
@@ -242,7 +252,7 @@ function drawCursor(ctx, x, y, angle, radius, color) {
   ctx.fill(fill);
 }
 
-function drawPlayer(ctx, p) {
+function drawPlayer(ctx, p, rules) {
   const r = playerRadius(p);
 
   ctx.globalAlpha = p.alive ? 1 : 0.25;
@@ -265,7 +275,7 @@ function drawPlayer(ctx, p) {
   const w = 40, h = 4;
   const x = px - w / 2, y = snap(py - r - 16);
   rect(ctx, x - PX, y - PX, w + PX * 2, h + PX * 2, BAR_BG);
-  const frac = p.hp / MAX_HP;
+  const frac = p.hp / rules.maxHp;
   rect(ctx, x, y, w * frac, h, frac > 0.5 ? '#4ade80' : frac > 0.25 ? '#facc15' : '#f87171');
 
   // Thin reload bar under the health bar, visible to everyone.
@@ -277,7 +287,7 @@ function drawPlayer(ctx, p) {
   const iw = 4, ih = 36;
   const ix = snap(px - r * 1.3 - 9), iy = py - ih / 2;
   rect(ctx, ix - PX, iy - PX, iw + PX * 2, ih + PX * 2, BAR_BG);
-  const inkH = snap((p.ink / PEN_CAPACITY) * ih);
+  const inkH = snap((p.ink / rules.penCapacity) * ih);
   rect(ctx, ix, iy + ih - inkH, iw, inkH, p.color);
 
   // FAT WALLS timer: thin bar just left of the ink bar.
@@ -290,6 +300,7 @@ function drawPlayer(ctx, p) {
 }
 
 function drawHud(ctx, me, input) {
+  if (!me.alive) return;
   // Ammo, bottom-left.
   const x = 16, y = ARENA.h - 12;
   if (me.reloading > 0) {
@@ -309,5 +320,71 @@ function drawHud(ctx, me, input) {
     drawSprite(ctx, ring(r + 1, '#000000'), input.mx, input.my);
     drawSprite(ctx, ring(r - 1, '#000000'), input.mx, input.my);
     drawSprite(ctx, ring(r, color), input.mx, input.my);
+  }
+}
+
+// Menus: just the generative art.
+export function renderBackdrop(ctx, seed) {
+  ctx.setTransform(1 / PX, 0, 0, 1 / PX, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  drawBackground(ctx, seed);
+}
+
+// ---- match overlay: scoreboard, round, timer, countdown, banners ----
+
+export function renderMatchHud(ctx, match, localId) {
+  const game = match.game;
+
+  // HUD blocks turn see-through while a player is underneath them (spawns sit in the corners).
+  const under = (x0, y0, x1, y1) =>
+    Object.values(game.players).some((p) => p.alive && p.x > x0 && p.x < x1 && p.y > y0 && p.y < y1);
+
+  // Top-left: every player's name and rounds won.
+  let y = 14;
+  ctx.globalAlpha = under(0, 0, 250, 30 + match.roster.length * 22) ? 0.3 : 1;
+  for (const r of match.roster) {
+    const p = game.players[r.id];
+    const alive = p && p.alive;
+    rect(ctx, 16, y + 4, 10, 10, BAR_BG);
+    rect(ctx, 18, y + 6, 6, 6, alive ? r.color : darken(r.color));
+    drawText(ctx, r.name, 34, y, { color: alive ? '#ffffff' : '#9ca3af' });
+    drawText(ctx, `${match.scores[r.id] ?? 0}`, 214, y, { color: '#ffe066', align: 'right' });
+    y += 22;
+  }
+
+  // Top-center: round number, then the clock (or the sudden death warning).
+  const cx = ARENA.w / 2;
+  ctx.globalAlpha = under(cx - 140, 0, cx + 140, 110) ? 0.3 : 1;
+  drawText(ctx, `ROUND ${match.round}`, cx, 12, { size: 16, align: 'center' });
+  drawText(ctx, `FIRST TO ${match.settings.roundsToWin} WINS`, cx, 52, { color: '#d1d5db', align: 'center' });
+  if (match.suddenDeath) {
+    if (Math.floor(performance.now() / 300) % 2 === 0) drawText(ctx, 'SUDDEN DEATH', cx, 74, { color: '#f87171', align: 'center' });
+  } else if (match.settings.roundTime > 0 && match.phase === 'playing') {
+    const left = Math.max(0, Math.ceil(match.settings.roundTime - match.roundTime));
+    const clock = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+    drawText(ctx, clock, cx, 74, { color: left <= 10 ? '#f87171' : '#ffffff', align: 'center' });
+  }
+
+  ctx.globalAlpha = 1;
+
+  // Center: countdown, GO!, round result.
+  const cy = ARENA.h / 2;
+  if (match.phase === 'countdown') {
+    drawText(ctx, `${Math.max(1, Math.ceil(match.timer))}`, cx, cy, { size: 16, scale: 4, align: 'center', valign: 'middle' });
+  } else if (match.goTimer > 0) {
+    drawText(ctx, 'GO!', cx, cy, { size: 16, scale: 4, color: '#4ade80', align: 'center', valign: 'middle' });
+  } else if (match.phase === 'roundEnd') {
+    const w = match.roster.find((r) => r.id === match.roundWinner);
+    if (w) {
+      drawText(ctx, w.name, cx, cy - 30, { size: 16, scale: 2, color: w.color, align: 'center', valign: 'middle' });
+      drawText(ctx, 'WINS THE ROUND', cx, cy + 34, { size: 16, align: 'center', valign: 'middle' });
+    } else {
+      drawText(ctx, 'DRAW!', cx, cy, { size: 16, scale: 3, color: '#d1d5db', align: 'center', valign: 'middle' });
+    }
+  }
+
+  const me = game.players[localId];
+  if (me && !me.alive && match.phase === 'playing') {
+    drawText(ctx, 'YOU ARE OUT - WAIT FOR THE NEXT ROUND', cx, ARENA.h - 20, { color: '#d1d5db', align: 'center', valign: 'bottom' });
   }
 }

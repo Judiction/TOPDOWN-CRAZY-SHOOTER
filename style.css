@@ -32,6 +32,10 @@ body {
   background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 3px);
 }
 
+body:not(.in-match) #hint {
+  display: none;
+}
+
 #hint {
   position: fixed;
   bottom: 8px;
@@ -42,4 +46,273 @@ body {
   font: 16px Silkscreen, monospace;
   text-shadow: 2px 0 #000, -2px 0 #000, 0 2px #000, 0 -2px #000;
   pointer-events: none;
+}
+
+/* ---- menus ---- */
+/* --px = one game pixel in CSS px (set from JS), so menus scale with the canvas and stay pixel-sharp. */
+
+#ui {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  font-family: Silkscreen, monospace;
+  font-size: calc(var(--px) * 8);
+  line-height: 1.5;
+  color: #fff;
+}
+
+#ui:empty {
+  display: none;
+}
+
+.panel {
+  pointer-events: auto;
+  background: rgba(8, 8, 14, 0.85);
+  padding: calc(var(--px) * 12) calc(var(--px) * 16);
+  text-align: center;
+  box-shadow:
+    0 0 0 var(--px) #000,
+    0 0 0 calc(var(--px) * 2) #fff,
+    0 0 0 calc(var(--px) * 3) #000;
+}
+
+.panel h1, .panel h2, .panel h3, .panel p {
+  margin: 0;
+  font-weight: normal;
+}
+
+.panel h2 {
+  font-size: calc(var(--px) * 16);
+}
+
+.panel h3 {
+  color: #9ca3af;
+  margin: calc(var(--px) * 8) 0 calc(var(--px) * 3);
+}
+
+.logo {
+  font-size: calc(var(--px) * 32);
+  line-height: 1.15;
+  margin-bottom: calc(var(--px) * 12) !important;
+  text-shadow: calc(var(--px) * 2) calc(var(--px) * 2) 0 #000;
+}
+
+.panel button {
+  font: inherit;
+  color: #fff;
+  background: #1f2937;
+  border: none;
+  margin: calc(var(--px) * 3);
+  padding: calc(var(--px) * 2) calc(var(--px) * 6);
+  cursor: pointer;
+  box-shadow: inset 0 calc(var(--px) * -2) 0 #0b0f19, 0 0 0 var(--px) #000;
+}
+
+.panel button:hover:not(:disabled) {
+  background: #4b5563;
+}
+
+.panel button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.panel button.big {
+  font-size: calc(var(--px) * 16);
+  padding: calc(var(--px) * 3) calc(var(--px) * 10);
+  background: #be185d;
+}
+
+.panel button.big:hover:not(:disabled) {
+  background: #db2777;
+}
+
+.panel button[hidden] {
+  display: none;
+}
+
+.panel input {
+  font: inherit;
+  color: #fff;
+  background: #000;
+  border: none;
+  outline: none;
+  width: calc(var(--px) * 110);
+  padding: calc(var(--px) * 2) calc(var(--px) * 4);
+  margin: calc(var(--px) * 3);
+  text-align: center;
+  box-shadow: 0 0 0 var(--px) #6b7280;
+}
+
+.panel input:focus {
+  box-shadow: 0 0 0 var(--px) #fff;
+}
+
+.field, .row {
+  display: block;
+  margin: calc(var(--px) * 4) 0;
+}
+
+.msg {
+  min-height: 1.5em;
+  color: #fde047;
+}
+
+.help {
+  color: #9ca3af;
+  margin-top: calc(var(--px) * 8) !important;
+}
+
+/* lobby */
+
+.lobby {
+  width: calc(var(--px) * 560);
+  text-align: left;
+}
+
+.lobby-head, .lobby-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.lobby-foot {
+  margin-top: calc(var(--px) * 10);
+}
+
+.code b {
+  font-size: calc(var(--px) * 16);
+  color: #fde047;
+  margin-left: calc(var(--px) * 4);
+}
+
+.lobby-cols {
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  gap: calc(var(--px) * 16);
+}
+
+.players {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.players li {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--px) * 4);
+  height: calc(var(--px) * 12);
+}
+
+.players i {
+  font-style: normal;
+  color: #000;
+  background: #9ca3af;
+  padding: 0 calc(var(--px) * 2);
+  line-height: 1.3;
+}
+
+.players .pname {
+  min-width: calc(var(--px) * 80);
+}
+
+.players .x {
+  margin: 0 0 0 auto !important;
+  padding: 0 calc(var(--px) * 3) !important;
+  background: #7f1d1d !important;
+}
+
+.dot {
+  width: calc(var(--px) * 6);
+  height: calc(var(--px) * 6);
+  background: var(--c);
+  box-shadow: 0 0 0 var(--px) #000;
+}
+
+.button.small, .panel .small {
+  margin-left: 0;
+}
+
+.colors {
+  display: grid;
+  grid-template-columns: repeat(16, calc(var(--px) * 12));
+  gap: var(--px);
+}
+
+.panel .swatch {
+  width: calc(var(--px) * 12);
+  height: calc(var(--px) * 12);
+  margin: 0;
+  padding: 0;
+  background: var(--c);
+  box-shadow: 0 0 0 var(--px) #000;
+}
+
+.panel .swatch:hover:not(:disabled) {
+  background: var(--c);
+  box-shadow: 0 0 0 var(--px) #fff;
+}
+
+.panel .swatch.mine {
+  box-shadow: 0 0 0 var(--px) #000, 0 0 0 calc(var(--px) * 2) #fff;
+  position: relative;
+  z-index: 1;
+}
+
+.panel .swatch.taken {
+  opacity: 1;
+  background: repeating-linear-gradient(45deg, var(--c) 0 calc(var(--px) * 2), #000 0 calc(var(--px) * 4));
+}
+
+.settings .setting {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: calc(var(--px) * 16);
+}
+
+.settings .ctl {
+  display: flex;
+  align-items: center;
+}
+
+.settings b {
+  display: inline-block;
+  min-width: calc(var(--px) * 64);
+  text-align: center;
+  color: #fde047;
+  font-weight: normal;
+}
+
+.settings .arrow {
+  margin: 0 !important;
+  padding: 0 calc(var(--px) * 3) !important;
+}
+
+.status {
+  color: #9ca3af;
+}
+
+/* winner screen */
+
+.gameover .winner {
+  font-size: calc(var(--px) * 32);
+  text-shadow: calc(var(--px) * 2) calc(var(--px) * 2) 0 #000;
+}
+
+.gameover .scores {
+  margin: calc(var(--px) * 10) auto;
+  width: calc(var(--px) * 160);
+  text-align: left;
+}
+
+.gameover .scores b {
+  margin-left: auto;
+  color: #fde047;
+  font-weight: normal;
 }

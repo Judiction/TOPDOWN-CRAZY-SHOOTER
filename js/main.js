@@ -1,12 +1,17 @@
-// Sandbox: you plus a target dummy that respawns. Replaced by real players in step 2.
+// App flow: title → lobby → match (rounds) → winner screen → back to lobby or title.
+// For now this browser is always the host and runs the match itself; bots fill the other seats.
+// Networking plugs in at the "NET:" notes: the host will share room/match state, clients send input.
 
-import {
-  createGame, addPlayer, respawnPlayer, findFreeSpot, step, emptyInput, spawnPowerup, newBackgroundSeed,
-} from './game.js';
-import { initInput, readInput } from './input.js';
-import { initCanvas, render } from './render.js';
+import { emptyInput, newBackgroundSeed } from './game.js';
+import { createMatch, stepMatch } from './match.js';
+import { createBrain, botInput } from './bots.js';
+import { createRoom, applyAction, canStart } from './room.js';
+import { cleanName } from './settings.js';
+import { initInput, readInput, isTyping } from './input.js';
+import { initCanvas, render, renderBackdrop, renderMatchHud } from './render.js';
 import { FONT, clearSpriteCache } from './pixel.js';
-import { initAudio, updateAudio } from './audio.js';
+import { initAudio, updateAudio, playUi } from './audio.js';
+import { createUI } from './ui.js';
 
 // Wait (briefly) for the pixel font so text isn't first drawn in a fallback font.
 try {
@@ -15,73 +20,164 @@ try {
 document.fonts.ready.then(clearSpriteCache);
 
 const TICK = 1 / 60;
-const DUMMY_RESPAWN_DELAY = 2;
-
-// Sandbox only: one of each powerup next to you, re-placed a few seconds after you grab it.
-const TEST_POWERUPS = [
-  { type: 'fat', x: 200, y: 200 },
-  { type: 'ricochet', x: 300, y: 200 },
-  { type: 'small', x: 200, y: 520 },
-  { type: 'defense', x: 300, y: 520 },
-];
-const TEST_POWERUP_RESPAWN = 5;
+const LOCAL_ID = 'local';             // NET: becomes this browser's peer id
+const WINNER_SCREEN_DELAY = 1500;     // ms between the final kill and the winner screen
 
 const canvas = document.getElementById('game');
 const ctx = initCanvas(canvas);
 initInput(canvas);
 initAudio();
 
-const game = createGame();
-addPlayer(game, 'me', { name: 'You', color: '#60a5fa', x: 250, y: 360 });
-addPlayer(game, 'dummy', { name: 'Dummy', color: '#f472b6', x: 900, y: 360 });
-
-// The dummy paints a wall at startup so there's someone else's (pink) wall to shoot at.
-for (let y = 200; y <= 520; y += 4) {
-  step(game, { dummy: { ...emptyInput(), draw: true, click: true, mx: 700, my: y } }, TICK);
+// Name and color are remembered between visits.
+const prefs = loadPrefs();
+function loadPrefs() {
+  try {
+    return JSON.parse(localStorage.getItem('ccbp.prefs')) || {};
+  } catch {
+    return {};
+  }
+}
+function savePrefs() {
+  try {
+    localStorage.setItem('ccbp.prefs', JSON.stringify(prefs));
+  } catch {}
 }
 
-// Sandbox only: B rolls a new background so you can flip through styles. (Later: a new one each round.)
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyB') game.bgSeed = newBackgroundSeed();
+const app = {
+  screen: 'title',                    // 'title' | 'lobby' | 'match'
+  room: null,
+  match: null,
+  brains: {},                         // bot id -> AI state
+  menuOpen: false,
+  winnerShownAt: null,
+  lastInput: emptyInput(),
+};
+// What plays behind the menus: just background art + music.
+const menuScene = { events: [], players: {}, bgSeed: newBackgroundSeed() };
+
+const ui = createUI(document.getElementById('ui'), {
+  onClick: playUi,
+  onHost(name) {
+    prefs.name = cleanName(name);
+    savePrefs();
+    app.room = createRoom({ id: LOCAL_ID, name: prefs.name, color: prefs.color });
+    goLobby();
+  },
+  onJoin(name) {
+    prefs.name = cleanName(name);
+    savePrefs();
+    // NET: connect to the host's room here.
+    ui.setMessage('ONLINE PLAY ARRIVES IN THE NEXT UPDATE. HOST A GAME AND ADD BOTS FOR NOW!');
+  },
+  onAction(action) {
+    if (!applyAction(app.room, LOCAL_ID, action)) return;
+    const me = app.room.players.find((p) => p.id === LOCAL_ID);
+    prefs.name = me.name;
+    prefs.color = me.color;
+    savePrefs();
+    ui.updateLobby(app.room, LOCAL_ID);
+  },
+  onStart: startMatch,
+  onLeave: goTitle,
+  onResume: closeMenu,
+  onEndMatch: endMatch,
+  onPlayAgain: endMatch,
+  onMenu: goTitle,
 });
 
-const testSlots = TEST_POWERUPS.map((t) => ({ ...t, id: spawnPowerup(game, t.type, t.x, t.y).id, emptyFor: 0 }));
+function goTitle() {
+  app.screen = 'title';
+  app.room = null;
+  app.match = null;
+  document.body.classList.remove('in-match');
+  const code = new URLSearchParams(location.search).get('room') || '';
+  ui.showTitle({ name: prefs.name || '', code });
+}
 
-let dummyDeadFor = 0;
+function goLobby() {
+  app.screen = 'lobby';
+  app.room.inMatch = false;
+  for (const p of app.room.players) p.waiting = false;
+  document.body.classList.remove('in-match');
+  ui.showLobby(app.room, LOCAL_ID);
+}
+
+function startMatch() {
+  const room = app.room;
+  if (!canStart(room)) return;
+  room.inMatch = true;
+  app.match = createMatch(room.settings, room.players);
+  app.brains = Object.fromEntries(room.players.filter((p) => p.isBot).map((p) => [p.id, createBrain()]));
+  app.screen = 'match';
+  app.menuOpen = false;
+  app.winnerShownAt = null;
+  ui.hide();
+  document.body.classList.add('in-match');
+}
+
+// Host ends the match (from the ESC menu, or "play again"): everyone returns to the lobby.
+function endMatch() {
+  if (app.match) menuScene.bgSeed = app.match.game.bgSeed;   // keep the current art + music going
+  app.match = null;
+  app.menuOpen = false;
+  goLobby();
+}
+
+function openMenu() {
+  app.menuOpen = true;
+  ui.showPause(true);
+}
+
+function closeMenu() {
+  app.menuOpen = false;
+  ui.hide();
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'Escape' || isTyping(e) || app.screen !== 'match' || app.match?.phase === 'gameOver') return;
+  if (app.menuOpen) closeMenu();
+  else openMenu();
+});
+
 let last = performance.now();
 let acc = 0;
-
-function sandboxTick() {
-  const dummy = game.players.dummy;
-  if (!dummy.alive && (dummyDeadFor += TICK) >= DUMMY_RESPAWN_DELAY) {
-    dummyDeadFor = 0;
-    const spot = findFreeSpot(game);
-    respawnPlayer(game, 'dummy', spot.x, spot.y);
-  }
-
-  for (const s of testSlots) {
-    if (game.powerups.some((u) => u.id === s.id)) continue;
-    if ((s.emptyFor += TICK) >= TEST_POWERUP_RESPAWN) {
-      s.emptyFor = 0;
-      s.id = spawnPowerup(game, s.type, s.x, s.y).id;
-    }
-  }
-}
 
 function frame(now) {
   acc += Math.min((now - last) / 1000, 0.25);
   last = now;
 
-  const input = readInput();
-  // Fixed-rate simulation, so the game runs the same on every machine.
-  while (acc >= TICK) {
-    step(game, { me: input }, TICK);
-    sandboxTick();
-    acc -= TICK;
+  const m = app.screen === 'match' ? app.match : null;
+  if (m) {
+    // While the ESC menu is open you stand still but keep aiming where you were.
+    const input = app.menuOpen ? { ...emptyInput(), mx: app.lastInput.mx, my: app.lastInput.my } : readInput();
+    app.lastInput = input;
+    // Fixed-rate simulation, so the game runs the same on every machine.
+    while (acc >= TICK) {
+      const inputs = { [LOCAL_ID]: input };    // NET: plus the latest input from each remote player
+      for (const id of Object.keys(app.brains)) inputs[id] = botInput(m.game, id, app.brains[id], TICK);
+      stepMatch(m, inputs, TICK);
+      acc -= TICK;
+    }
+    render(ctx, m.game, LOCAL_ID, input);
+    renderMatchHud(ctx, m, LOCAL_ID);
+    updateAudio(m.game);
+
+    if (m.phase === 'gameOver') {
+      app.winnerShownAt ??= now + WINNER_SCREEN_DELAY;
+      if (now >= app.winnerShownAt && ui.screen !== 'gameover') {
+        app.menuOpen = false;
+        document.body.classList.remove('in-match');
+        ui.showGameOver(m, true);
+      }
+    }
+  } else {
+    acc = 0;
+    renderBackdrop(ctx, menuScene.bgSeed);
+    updateAudio(menuScene);
   }
 
-  render(ctx, game, 'me', input);
-  updateAudio(game);
   requestAnimationFrame(frame);
 }
+
+goTitle();
 requestAnimationFrame(frame);
