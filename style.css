@@ -1,0 +1,45 @@
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #0b0c10;
+  overflow: hidden;
+}
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#game {
+  display: block;
+  cursor: crosshair;
+  /* Scale the low-res canvas up with hard pixel edges. */
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+}
+
+/* Faint CRT scanlines over the game. Pure CSS, so it costs nothing per frame. */
+#screen {
+  position: relative;
+}
+
+#screen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 3px);
+}
+
+#hint {
+  position: fixed;
+  bottom: 8px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  color: #d1d5db;
+  font: 16px Silkscreen, monospace;
+  text-shadow: 2px 0 #000, -2px 0 #000, 0 2px #000, 0 -2px #000;
+  pointer-events: none;
+}
