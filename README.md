@@ -30,8 +30,8 @@ Want to play solo or fill empty seats? The host can **+ ADD BOT** in the lobby.
 
 ## Rules
 
-- **Rounds:** each round starts with a 3, 2, 1, GO! countdown. The last player alive wins the round. The first player to reach the host's number of round wins takes the game.
-- **Health:** you die after 10 hits. The host can change this.
+- **Rounds:** each round starts with a 5-second countdown. The last player alive wins the round. The first player to reach the host's number of round wins takes the game.
+- **Health:** you die after 10 hits. The host can change this. Eliminating a player heals you 5 HP.
 - **Ammo:** 60 bullets per magazine. A reload takes 3 seconds.
 - **Sudden death:** if the round timer runs out, everyone slowly loses health until one player is left.
 
@@ -43,7 +43,7 @@ Bullets chip walls away, and the ink **always goes back to whoever drew that wal
 
 ### Powerups
 
-Every round starts with 3 random powerups on the map, and a new one appears every 30 seconds. Walk over one to grab it.
+Every round starts with 4 random powerups on the map, and a new one appears every 30 seconds. Walk over one to grab it.
 
 | Powerup | Effect |
 |---|---|
@@ -61,19 +61,19 @@ Every round starts with 3 random powerups on the map, and a new one appears ever
 | Weapon | Effect |
 |---|---|
 | **Shotgun** (yellow) | Fires 6 pellets in a 30° arc. 60 pellets, so 10 shots |
-| **Uzi** (purple) | 90 fast bullets at twice the pistol's speed. They fizzle out after a short distance |
-| **Rocket** (gray) | 6 slower rockets that home in on the nearest enemy. A direct hit does 3 damage. The explosion does 2 damage to everyone nearby, you included, and blasts holes in walls |
+| **Uzi** (purple) | 60 fast bullets at twice the pistol's speed. They fizzle out after a short distance |
+| **Rocket** (gray) | 3 slower rockets that home in on the nearest enemy. A direct hit does 3 damage. The explosion does 2 damage to everyone nearby, you included, and blasts holes in walls |
 | **Laser** | One shot. After a short charge, a huge beam cuts through every wall to the edge of the arena and does 7 damage to everyone on the line |
 | **Sniper** | 10 very fast shots that punch straight through walls and do 4 damage each. Everyone can see your aim line |
 | **Flamer** | A short-range jet of fire that eats through walls and burns anyone in it |
-| **Grenade** | 4 grenades that bounce off walls and explode after 1.5 seconds, doing 3 damage to everyone in the blast |
+| **Grenade** | 10 grenades that bounce off walls and explode after 1.5 seconds, doing 3 damage to everyone in the blast |
 
 **Map events**
 
 | Powerup | Effect |
 |---|---|
 | **Eraser** (teal) | Every wall on the map vanishes and everyone's pen refills |
-| **Meteors** (dark) | Over the next 10 seconds, 3 meteors strike random spots, one at a time. Get out of the flashing circle before it explodes, or take 5 damage. The picker isn't safe either |
+| **Meteors** (dark) | Over the next 12 seconds, 6 meteors strike random spots, one at a time. Get out of the flashing circle before it explodes, or take 5 damage. The picker isn't safe either |
 | **Blackout** | For 8 seconds everything goes dark except a small light around your own cursor |
 | **Gravity Well** | For 6 seconds a vortex in the middle of the arena pulls in every player and bends every bullet |
 | **Paint Bomb** | Splats walls in the picker's color all over the map, using no ink |

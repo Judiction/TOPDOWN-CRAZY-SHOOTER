@@ -5,7 +5,7 @@ import {
 } from './game.js';
 import {
   updateFx, shakeOffset, drawBackgroundFx, drawWallFx, drawMeteors, drawSmoke, drawTopFx,
-  drawGravity, drawPlayerFx, drawBlackout, drawBanners,
+  drawGravity, drawPlayerFx, drawBlackout, drawBanners, drawFloats,
 } from './fx.js';
 import { powerupIcon } from './icons.js';
 import { createBackground, BG_W, BG_H } from './background.js';
@@ -77,6 +77,8 @@ let bgLastDraw = -Infinity;
 const FLASH_MS = 300;
 const FLASH_STRENGTH = 0.3;           // peak opacity of the tint (1 = full color-dodge)
 const seenHits = {};                  // player id -> hit count already flashed for
+const hitAt = {};                     // player id -> when they were last hit (their cursor flashes white)
+const HIT_FLASH_MS = 140;
 let flash = null;                     // { color, start }
 
 // The canvas is VIEW_W x VIEW_H real pixels; CSS scales it up with nearest-neighbor (see style.css).
@@ -167,6 +169,10 @@ export function render(ctx, game, localId, input) {
 
   // Screen-space from here on: never shaken or mirrored.
   ctx.setTransform(1 / PX, 0, 0, 1 / PX, 0, 0);
+  const toScreen = (x, y) =>
+    game.mirror?.axis === 'x' ? [ARENA.w / 2 + (x - ARENA.w / 2) * flip, y]
+      : game.mirror ? [x, ARENA.h / 2 + (y - ARENA.h / 2) * flip] : [x, y];
+  drawFloats(ctx, game, now, localId, toScreen);
   if (me) drawHud(ctx, me);
   drawBanners(ctx, now);
 }
@@ -195,7 +201,10 @@ function drawBackground(ctx, seed) {
 function drawHitFlash(ctx, game) {
   const now = performance.now();
   for (const p of Object.values(game.players)) {
-    if (p.hitCount > (seenHits[p.id] ?? p.hitCount)) flash = { color: p.color, start: now };
+    if (p.hitCount > (seenHits[p.id] ?? p.hitCount)) {
+      flash = { color: p.color, start: now };
+      hitAt[p.id] = now;
+    }
     seenHits[p.id] = p.hitCount;
   }
   if (!flash) return;
@@ -352,7 +361,9 @@ function drawPlayer(ctx, p, rules, isMe, now) {
 
   // Your own ghost shows as a faint flicker so you know where you are; others don't see you at all.
   ctx.globalAlpha = !p.alive ? 0.25 : p.ghost > 0 ? (Math.floor(now / 90) % 2 ? 0.3 : 0.45) : 1;
-  drawCursor(ctx, p.x, p.y, p.aim, r, p.color);
+  // Just got hit: the whole cursor flashes white.
+  const hit = p.alive && now - (hitAt[p.id] ?? -Infinity) < HIT_FLASH_MS;
+  drawCursor(ctx, p.x, p.y, p.aim, r, hit ? '#ffffff' : p.color);
   ctx.globalAlpha = 1;
 
   if (!p.alive) return;
@@ -506,9 +517,20 @@ export function renderMatchHud(ctx, match, localId) {
   // Center: countdown, GO!, round result.
   const cy = ARENA.h / 2;
   if (match.phase === 'countdown') {
-    drawText(ctx, `${Math.max(1, Math.ceil(match.timer))}`, cx, cy, { size: 16, scale: 4, align: 'center', valign: 'middle' });
+    // Each number slams in big and shrinks fast (ease-out), then fades just before the next one.
+    const n = Math.max(1, Math.ceil(match.timer));
+    const k = Math.min(1, Math.max(0, n - match.timer));       // 0 → 1 through this second
+    const e = 1 - (1 - Math.min(1, k / 0.35)) ** 3;
+    ctx.globalAlpha = k > 0.85 ? (1 - k) / 0.15 : 1;
+    const color = n <= 1 ? '#f87171' : n <= 3 ? '#fde047' : '#ffffff';
+    drawText(ctx, `${n}`, cx, cy, { size: 16, scale: 10 - 6 * e, color, align: 'center', valign: 'middle' });
+    ctx.globalAlpha = 1;
   } else if (match.goTimer > 0) {
-    drawText(ctx, 'GO!', cx, cy, { size: 16, scale: 4, color: '#4ade80', align: 'center', valign: 'middle' });
+    const k = 1 - match.goTimer / 0.8;
+    const e = 1 - (1 - Math.min(1, k / 0.3)) ** 3;
+    ctx.globalAlpha = k > 0.75 ? (1 - k) / 0.25 : 1;
+    drawText(ctx, 'GO!', cx, cy, { size: 16, scale: 9 - 4 * e, color: '#4ade80', align: 'center', valign: 'middle' });
+    ctx.globalAlpha = 1;
   } else if (match.phase === 'roundEnd') {
     const w = match.roster.find((r) => r.id === match.roundWinner);
     if (w) {

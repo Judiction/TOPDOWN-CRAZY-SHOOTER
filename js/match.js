@@ -9,7 +9,7 @@ import {
 } from './game.js';
 import { gameRules } from './settings.js';
 
-export const COUNTDOWN = 3;            // seconds of "3, 2, 1"
+export const COUNTDOWN = 5;            // seconds of "5, 4, 3, 2, 1"
 export const GO_SHOW = 0.8;            // how long "GO!" stays on screen
 export const ROUND_END_DELAY = 3;      // seconds the round-winner banner shows before the next round
 export const SUDDEN_DEATH_TICK = 1.5;  // once the round timer runs out, everyone loses 1 HP this often

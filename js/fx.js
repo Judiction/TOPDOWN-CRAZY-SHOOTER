@@ -3,7 +3,7 @@
 // sparkles and big announcement banners. Purely cosmetic and local to each screen, so nothing here
 // is sent over the network.
 
-import { ARENA, COLS, ROWS, EXPLOSION_RADIUS, meteorRadius, meteorFlashes } from './game.js';
+import { ARENA, COLS, ROWS, EXPLOSION_RADIUS, MAP_EVENTS, meteorRadius, meteorFlashes, playerRadius } from './game.js';
 import { PX, VIEW_W, VIEW_H, snap, disc, ring, drawSprite, drawText } from './pixel.js';
 
 const booms = [];                     // { x, y, r, start, dur }
@@ -12,6 +12,7 @@ const puffs = [];                     // rocket smoke: { x, y, born }
 const sparks = [];                    // pickup particles: { x, y, vx, vy, color, born, life, shape }
 const glows = [];                     // medkit flash on a player: { pid, start }
 const banners = [];                   // big centered text: { text, color, start, dur }
+const floats = [];                    // small text over a player: { pid, text, color, start, dur, rise }
 let shake = { until: 0, amp: 0, dur: 1 };
 let whiteFlash = null;                // { start, dur }
 let invertFlash = null;
@@ -23,8 +24,17 @@ const PUFF_MS = 450;
 const ERASE_MS = 900;
 const BEAM_MS = 420;
 const BANNER_MS = 1300;
-const STORM_MS = 1700;
-const STORM_STRIKES = [0, 0.14, 0.55, 0.66, 1.15];   // seconds after the event at which lightning flashes
+const STORM_MS = 3000;
+// Seconds after the event at which lightning flashes; every other strike also draws a bolt.
+const STORM_STRIKES = [0, 0.1, 0.32, 0.6, 0.7, 1.05, 1.4, 1.5, 1.95, 2.3, 2.4];
+const FLOAT_MS = 950;
+
+// What each powerup is called when it pops up over the player who grabbed it.
+const PICKUP_NAMES = {
+  fat: 'FAT WALLS', ricochet: 'RICOCHET', small: 'GET SMALL', defense: 'DEFENSE BALLS', ghost: 'GHOST',
+  speed: 'SPEED BOOTS', inkrush: 'INK RUSH', medkit: 'MEDKIT', shotgun: 'SHOTGUN', uzi: 'UZI', rocket: 'ROCKETS',
+  laser: 'LASER', sniper: 'SNIPER', flamer: 'FLAMETHROWER', grenade: 'GRENADES',
+};
 
 const BANNERS = {
   erase: ['ERASED!', null],
@@ -86,14 +96,18 @@ export function updateFx(game, now, wallImage, localId) {
       beams.push({ x: e.x, y: e.y, x2: e.x2, y2: e.y2, color: e.color, start: now });
       addShake(now, 7, 250);
     } else if (e.type === 'inkstorm') {
-      storm = { start: now };
-      addShake(now, 5, 300);
-    } else if (e.type === 'pickup' && e.kind === 'meteor') {
+      storm = { start: now, bolts: STORM_STRIKES.map(makeBolt) };
+      addShake(now, 6, 400);
+    } else if (e.type === 'pickup' && !MAP_EVENTS.includes(e.kind) && PICKUP_NAMES[e.kind] && !hidden(e.pid)) {
+      floats.push({ pid: e.pid, text: PICKUP_NAMES[e.kind], color: '#ffffff', start: now, dur: FLOAT_MS, rise: false });
+    }
+    if (e.type === 'pickup' && e.kind === 'meteor') {
       banners.length = 0;
       banners.push({ text: 'METEORS!', color: '#fb923c', start: now, dur: BANNER_MS });
     } else if (e.type === 'heal' && !hidden(e.pid)) {
       glows.push({ pid: e.pid, start: now });
       burst(e.x, e.y, '#4ade80', 10, now, 'plus');
+      floats.push({ pid: e.pid, text: `+${e.amount ?? 5} HP`, color: '#4ade80', start: now, dur: 1100, rise: true });
     } else if (e.type === 'inkRush' && !hidden(e.pid)) {
       burst(e.x, e.y, game.players[e.pid]?.color || '#3b82f6', 18, now, 'drop');
     } else if (e.type === 'paintbomb') {
@@ -107,6 +121,20 @@ export function updateFx(game, now, wallImage, localId) {
     puffs.push({ x: b.x - (b.vx / s) * 10, y: b.y - (b.vy / s) * 10, born: now });
   }
   while (puffs.length && (now - puffs[0].born > PUFF_MS || puffs.length > 400)) puffs.shift();
+}
+
+// A jagged lightning bolt from the top of the arena down to a random point.
+function makeBolt() {
+  const pts = [];
+  let x = 80 + Math.random() * (ARENA.w - 160), y = 0;
+  const end = ARENA.h * (0.5 + Math.random() * 0.5);
+  while (y < end) {
+    pts.push([x, y]);
+    x += (Math.random() * 2 - 1) * 60;
+    y += 30 + Math.random() * 40;
+  }
+  pts.push([x, end]);
+  return pts;
 }
 
 function burst(x, y, color, n, now, shape) {
@@ -158,7 +186,7 @@ export function drawBackgroundFx(ctx, now) {
     else {
       let flash = 0, idx = 0;
       STORM_STRIKES.forEach((s, i) => {
-        const v = t >= s ? Math.max(0, 1 - (t - s) / 0.09) : 0;
+        const v = t >= s ? Math.max(0, 1 - (t - s) / 0.11) : 0;
         if (v > flash) {
           flash = v;
           idx = i;
@@ -167,7 +195,7 @@ export function drawBackgroundFx(ctx, now) {
       if (flash > 0) {
         ctx.save();
         ctx.globalCompositeOperation = 'screen';
-        ctx.globalAlpha = 0.85 * flash;
+        ctx.globalAlpha = flash;
         ctx.fillStyle = idx % 2 ? '#ffffff' : '#60a5fa';
         ctx.fillRect(0, 0, ARENA.w, ARENA.h);
         ctx.restore();
@@ -196,24 +224,55 @@ export function drawWallFx(ctx, now) {
   ctx.drawImage(eraseCanvas, 0, 0, ARENA.w, ARENA.h);
 }
 
-// GRAVITY WELL: a dark core with spiral arms of pixels swirling into it.
+// GRAVITY WELL: the arena darkens around a black core; shockwave rings collapse into it, six spiral
+// arms swirl around it and streams of debris get sucked in.
 export function drawGravity(ctx, game, now) {
   const g = game.gravity;
   if (!g) return;
   const fade = Math.min(1, g.t / 0.4, (g.dur - g.t) / 0.4);
-  const spin = now / 300;
-  ctx.globalAlpha = 0.8 * fade;
-  for (let arm = 0; arm < 4; arm++) {
-    for (let i = 0; i < 26; i++) {
-      const r = 26 + i * 9;
-      const a = spin + arm * (Math.PI / 2) + i * 0.32 - Math.log(r) * 0.6;
-      const color = i % 3 === 0 ? '#ffffff' : '#c4b5fd';
-      drawSprite(ctx, disc(i < 8 ? 2 : 1, color, null), g.x + Math.cos(a) * r, g.y + Math.sin(a) * r);
+  const t = now / 1000;
+  const pulse = 0.5 + 0.5 * Math.sin(t * 9);
+
+  // Darkness pooling around the center.
+  ctx.globalAlpha = 0.5 * fade;
+  drawSprite(ctx, disc(150, '#05010a', null), g.x, g.y);
+  ctx.globalAlpha = 0.35 * fade;
+  drawSprite(ctx, disc(210, '#05010a', null), g.x, g.y);
+
+  // Shockwave rings collapsing inward.
+  for (let i = 0; i < 4; i++) {
+    const k = (t * 0.7 + i / 4) % 1;
+    const r = Math.max(8, Math.round((200 * (1 - k) ** 1.5) / 4) * 4);
+    ctx.globalAlpha = fade * k * 0.9;
+    drawSprite(ctx, ring(r, i % 2 ? '#c4b5fd' : '#f0abfc'), g.x, g.y);
+  }
+
+  // Six spiral arms.
+  const spin = t * 3.3;
+  for (let arm = 0; arm < 6; arm++) {
+    for (let i = 0; i < 40; i++) {
+      const r = 28 + i * 10;
+      const a = spin + arm * (Math.PI / 3) + i * 0.27 - Math.log(r) * 0.8;
+      ctx.globalAlpha = fade * (1 - i / 48);
+      const color = i % 4 === 0 ? '#ffffff' : arm % 2 ? '#c4b5fd' : '#f0abfc';
+      drawSprite(ctx, disc(i < 10 ? 3 : i < 25 ? 2 : 1, color, null), g.x + Math.cos(a) * r, g.y + Math.sin(a) * r);
     }
   }
+
+  // Debris streaming in from all around, speeding up as it falls.
+  for (let i = 0; i < 70; i++) {
+    const k = (t * 0.55 + i * 0.137) % 1;
+    const r = 30 + 560 * (1 - k) ** 2;
+    const a = i * 2.39996 + k * 7;
+    ctx.globalAlpha = fade * Math.min(1, k * 3);
+    drawSprite(ctx, disc(1, i % 3 ? '#e9d5ff' : '#ffffff', null), g.x + Math.cos(a) * r, g.y + Math.sin(a) * r * 0.9);
+  }
+
+  // The core: black hole with a hot, pulsing rim.
   ctx.globalAlpha = fade;
-  drawSprite(ctx, disc(12, '#0b0614', '#7c3aed', 2), g.x, g.y);
-  drawSprite(ctx, ring(14 + Math.floor((now / 80) % 6), '#a78bfa'), g.x, g.y);
+  drawSprite(ctx, disc(Math.round(20 + 3 * pulse), '#000000', '#a855f7', 3), g.x, g.y);
+  drawSprite(ctx, ring(Math.round(26 + 4 * pulse), '#f0abfc'), g.x, g.y);
+  drawSprite(ctx, ring(Math.round(30 + 6 * pulse), '#7c3aed'), g.x, g.y);
   ctx.globalAlpha = 1;
 }
 
@@ -320,6 +379,8 @@ export function drawTopFx(ctx, now) {
   }
   ctx.globalAlpha = 1;
 
+  if (storm) drawStorm(ctx, now);
+
   if (whiteFlash) {
     const k = (now - whiteFlash.start) / whiteFlash.dur;
     if (k >= 1) whiteFlash = null;
@@ -330,6 +391,47 @@ export function drawTopFx(ctx, now) {
       ctx.globalAlpha = 1;
     }
   }
+}
+
+// INK STORM over the world: a dark blue tint, slanted rain, lightning bolts and bright flashes.
+function drawStorm(ctx, now) {
+  const t = (now - storm.start) / 1000;
+  const fade = Math.min(1, t / 0.15, (STORM_MS / 1000 - t) / 0.5);
+  if (fade <= 0) return;
+  ctx.globalAlpha = 0.28 * fade;
+  ctx.fillStyle = '#0b1e4a';
+  ctx.fillRect(0, 0, ARENA.w, ARENA.h);
+
+  ctx.fillStyle = '#bfdbfe';
+  for (let i = 0; i < 160; i++) {
+    const speed = 900 + (i % 5) * 120;
+    const y = ((i * 263 + t * speed) % (ARENA.h + 60)) - 30;
+    const x = ((i * 397 - t * speed * 0.35) % (ARENA.w + 200) + ARENA.w + 200) % (ARENA.w + 200) - 100;
+    ctx.globalAlpha = fade * (0.35 + (i % 3) * 0.15);
+    for (let k = 0; k < 4; k++) ctx.fillRect(snap(x - k * 2), snap(y + k * 6), PX, PX * 2);
+  }
+
+  STORM_STRIKES.forEach((s, i) => {
+    const v = t >= s ? Math.max(0, 1 - (t - s) / 0.13) : 0;
+    if (v <= 0) return;
+    ctx.globalAlpha = 0.45 * v;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, ARENA.w, ARENA.h);
+    if (i % 2) return;
+    ctx.globalAlpha = v;
+    const bolt = storm.bolts[i];
+    const glow = disc(3, '#93c5fd', null), core = disc(1, '#ffffff', null);
+    for (let j = 1; j < bolt.length; j++) {
+      const [x1, y1] = bolt[j - 1], [x2, y2] = bolt[j];
+      const len = Math.hypot(x2 - x1, y2 - y1);
+      for (let d = 0; d <= len; d += 4) {
+        const x = x1 + ((x2 - x1) * d) / len, y = y1 + ((y2 - y1) * d) / len;
+        drawSprite(ctx, glow, x, y);
+        drawSprite(ctx, core, x, y);
+      }
+    }
+  });
+  ctx.globalAlpha = 1;
 }
 
 // BLACKOUT: everything goes dark except a small pool of light around your own cursor.
@@ -370,6 +472,28 @@ export function drawBanners(ctx, now) {
     const color = b.color || rainbowHex(Math.floor(now / 40));
     ctx.globalAlpha = Math.min(1, 3 * (1 - k));
     drawText(ctx, b.text, ARENA.w / 2, ARENA.h / 2 - 70, { size: 16, scale, color, align: 'center', valign: 'middle' });
+  }
+  ctx.globalAlpha = 1;
+}
+
+// Small text popping up over a player: the powerup they just grabbed (flashing), or "+5 HP" (rising).
+// toScreen maps world positions to the screen, accounting for Mirror World.
+export function drawFloats(ctx, game, now, localId, toScreen) {
+  const stack = {};
+  for (let i = floats.length - 1; i >= 0; i--) {
+    const f = floats[i];
+    const k = (now - f.start) / f.dur;
+    const p = game.players[f.pid];
+    if (k >= 1 || !p) {
+      floats.splice(i, 1);
+      continue;
+    }
+    if (p.ghost > 0 && p.id !== localId) continue;
+    const n = (stack[f.pid] = (stack[f.pid] ?? -1) + 1);   // several at once stack upward
+    const [x, y] = toScreen(p.x, p.y - playerRadius(p) - 46 - n * 18 - (f.rise ? 24 * k : 0));
+    if (!f.rise && k < 0.7 && Math.floor(now / 65) % 2) continue;      // quick flashing
+    ctx.globalAlpha = k > 0.7 ? (1 - k) / 0.3 : 1;
+    drawText(ctx, f.text, x, y, { color: f.color, align: 'center', valign: 'bottom' });
   }
   ctx.globalAlpha = 1;
 }

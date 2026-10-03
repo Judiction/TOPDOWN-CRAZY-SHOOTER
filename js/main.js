@@ -522,6 +522,8 @@ function frame(now) {
     const input = app.lastInput;
     if (app.role === 'client') {
       smoothRemotes(game, app.myId, dt);
+      if (match.phase === 'countdown') match.timer = Math.max(0, match.timer - dt);
+      match.goTimer = Math.max(0, (match.goTimer || 0) - dt);
       const me = game.players[app.myId];
       if (me?.alive) me.aim = Math.atan2(input.my - me.y, input.mx - me.x);   // aim feels instant
     }

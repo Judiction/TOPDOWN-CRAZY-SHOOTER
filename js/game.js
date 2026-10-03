@@ -29,12 +29,12 @@ const PAINT_CLEARANCE = 2;            // px kept free around every player and po
 export const WEAPONS = {
   pistol: { cooldown: FIRE_COOLDOWN },
   shotgun: { ammo: 60, perShot: 6, cooldown: 0.45, speed: BULLET_SPEED, pellets: 6, spread: 0.52 },  // 10 shots, 30° arc
-  uzi: { ammo: 90, perShot: 1, cooldown: 0.06, speed: BULLET_SPEED * 2, range: 380, spread: 0.06 },
-  rocket: { ammo: 6, perShot: 1, cooldown: 0.6, speed: BULLET_SPEED * 0.75 },
+  uzi: { ammo: 60, perShot: 1, cooldown: 0.06, speed: BULLET_SPEED * 2, range: 380, spread: 0.06 },
+  rocket: { ammo: 3, perShot: 1, cooldown: 0.6, speed: BULLET_SPEED * 0.75 },
   laser: { ammo: 1, perShot: 1, cooldown: 0, charge: 0.45 },               // one huge beam after a short charge
   sniper: { ammo: 10, perShot: 1, cooldown: 0.8, speed: BULLET_SPEED * 3 },
   flamer: { ammo: 150, perShot: 1, cooldown: 0.03, speed: 600, spread: 0.25, life: 0.3 },
-  grenade: { ammo: 4, perShot: 1, cooldown: 0.7, speed: 520, fuse: 1.5 },
+  grenade: { ammo: 10, perShot: 1, cooldown: 0.7, speed: 520, fuse: 1.5 },
 };
 export const WEAPON_TYPES = ['shotgun', 'uzi', 'rocket', 'laser', 'sniper', 'flamer', 'grenade'];
 export const LASER_DAMAGE = 7;
@@ -60,7 +60,7 @@ export const POWERUP_TYPES = [
 export const MAP_EVENTS = ['eraser', 'meteor', 'blackout', 'gravity', 'paintbomb', 'mirror', 'inkstorm'];
 // Relative spawn chances; the map-wide events are rarer.
 export const POWERUP_WEIGHTS = Object.fromEntries(POWERUP_TYPES.map((t) => [t, MAP_EVENTS.includes(t) ? 0.5 : 1]));
-export const ROUND_START_POWERUPS = 3;
+export const ROUND_START_POWERUPS = 4;
 export const POWERUP_RADIUS = 20;
 export const POWERUP_INTERVAL = 30;   // default seconds between random spawns (0 = powerups off)
 export const MAX_POWERUPS = 6;        // no new spawns while this many are on the map
@@ -73,16 +73,17 @@ export const SHIELD_HITS = 2;         // hits each sphere takes before breaking
 export const SHIELD_RADIUS = 5;
 export const SHIELD_ORBIT = 14;       // px beyond the player's edge
 export const SHIELD_SPIN = 4;         // radians per second
-export const METEOR_COUNT = 3;        // strikes per METEORS pickup, one at a time
+export const METEOR_COUNT = 6;        // strikes per METEORS pickup, one at a time
 export const METEOR_FIRST = 0.4;      // seconds after pickup before the first warning circle
-export const METEOR_GAP = 3.3;        // seconds between warnings (all three land within ~10 s)
-export const METEOR_GROW = 3;         // seconds a warning circle grows before impact
+export const METEOR_GAP = 2;          // seconds between warnings (all six land within ~12 s)
+export const METEOR_GROW = 1.8;       // seconds a warning circle grows before impact
 export const METEOR_RADIUS = 80;
 export const METEOR_DAMAGE = 5;
 export const GHOST_DURATION = 8;      // invisible to others + walk through walls
 export const SPEED_DURATION = 10;
-export const SPEED_MULT = 1.6;
+export const SPEED_MULT = 1.68;
 export const MEDKIT_HEAL = 5;
+export const KILL_HEAL = 5;          // eliminating someone heals you this much
 export const BLACKOUT_DURATION = 8;
 export const GRAVITY_DURATION = 6;
 const GRAVITY_PULL = 40000;           // pull speed = GRAVITY_PULL / distance (px/s), capped below
@@ -352,7 +353,7 @@ function collectPowerups(game, p) {
     return false;
   });
   for (const u of grabbed) {
-    emit(game, 'pickup', { kind: u.type, x: u.x, y: u.y });
+    emit(game, 'pickup', { kind: u.type, x: u.x, y: u.y, pid: p.id });
     applyPowerup(game, p, u.type);
   }
 }
@@ -373,8 +374,7 @@ function applyPowerup(game, p, type) {
   } else if (type === 'ghost') p.ghost = GHOST_DURATION;
   else if (type === 'speed') p.speed = SPEED_DURATION;
   else if (type === 'medkit') {
-    p.hp = Math.min(game.rules.maxHp, p.hp + MEDKIT_HEAL);
-    emit(game, 'heal', { pid: p.id, x: p.x, y: p.y });
+    healPlayer(game, p, MEDKIT_HEAL);
   } else if (type === 'inkrush') {
     // Pen refills; your walls stay. Ink coming back from them later is still capped by the pen size.
     p.ink = game.rules.penCapacity;
@@ -536,7 +536,7 @@ function fireLaser(game, p) {
     if (!o.alive || o.id === p.id) continue;
     const along = Math.max(0, Math.min(len, (o.x - p.x) * dx + (o.y - p.y) * dy));
     const miss = Math.hypot(o.x - (p.x + dx * along), o.y - (p.y + dy * along));
-    if (miss <= LASER_WIDTH + playerRadius(o)) hurtPlayer(game, o, LASER_DAMAGE);
+    if (miss <= LASER_WIDTH + playerRadius(o)) hurtPlayer(game, o, LASER_DAMAGE, p.id);
   }
   emit(game, 'laser', { x: p.x, y: p.y, x2, y2, color: p.color });
   p.weapon = 'pistol';
@@ -605,8 +605,8 @@ function stepBullets(game, dt) {
     if (b.life !== Infinity) {
       b.life -= dt;
       if (b.life <= 0) {
-        if (kind === 'rocket') explode(game, b.x, b.y, null);
-        else if (kind === 'grenade') explode(game, b.x, b.y, null, { damage: GRENADE_DAMAGE, radius: GRENADE_RADIUS });
+        if (kind === 'rocket') explode(game, b.x, b.y, null, { by: b.owner });
+        else if (kind === 'grenade') explode(game, b.x, b.y, null, { damage: GRENADE_DAMAGE, radius: GRENADE_RADIUS, by: b.owner });
         return false;                 // flames just burn out
       }
     }
@@ -627,7 +627,7 @@ function stepBullets(game, dt) {
       const outY = b.y < 0 || b.y >= ARENA.h;
       if (outX || outY) {
         if (kind === 'rocket') {
-          explode(game, clamp(b.x, 0, ARENA.w - 1), clamp(b.y, 0, ARENA.h - 1), null);
+          explode(game, clamp(b.x, 0, ARENA.w - 1), clamp(b.y, 0, ARENA.h - 1), null, { by: b.owner });
           return false;
         }
         if (kind === 'grenade') {
@@ -648,7 +648,7 @@ function stepBullets(game, dt) {
 
       if (wallAt(game, b.x, b.y)) {
         if (kind === 'rocket') {
-          explode(game, b.x, b.y, null);
+          explode(game, b.x, b.y, null, { by: b.owner });
           return false;
         }
         if (kind === 'sniper') {
@@ -687,8 +687,8 @@ function stepBullets(game, dt) {
           p.shields[sphere.i] -= 1;
           emit(game, 'shield', { x: b.x, y: b.y, broke: p.shields[sphere.i] <= 0 });
           if (p.shields.every((hits) => hits <= 0)) p.shields = null;
-          if (kind === 'rocket') explode(game, b.x, b.y, null);
-          if (kind === 'grenade') explode(game, b.x, b.y, null, { damage: GRENADE_DAMAGE, radius: GRENADE_RADIUS });
+          if (kind === 'rocket') explode(game, b.x, b.y, null, { by: b.owner });
+          if (kind === 'grenade') explode(game, b.x, b.y, null, { damage: GRENADE_DAMAGE, radius: GRENADE_RADIUS, by: b.owner });
           return false;
         }
 
@@ -699,17 +699,17 @@ function stepBullets(game, dt) {
           // Flames pass through players, burning them at a limited rate.
           if (game.time >= p.burnUntil) {
             p.burnUntil = game.time + FLAME_BURN;
-            hurtPlayer(game, p);
+            hurtPlayer(game, p, 1, b.owner);
           }
           continue;
         }
         if (kind === 'rocket') {
-          hurtPlayer(game, p, ROCKET_HIT_DAMAGE);
-          explode(game, b.x, b.y, p);
+          hurtPlayer(game, p, ROCKET_HIT_DAMAGE, b.owner);
+          explode(game, b.x, b.y, p, { by: b.owner });
         } else if (kind === 'grenade') {
-          explode(game, b.x, b.y, null, { damage: GRENADE_DAMAGE, radius: GRENADE_RADIUS });
+          explode(game, b.x, b.y, null, { damage: GRENADE_DAMAGE, radius: GRENADE_RADIUS, by: b.owner });
         } else {
-          hurtPlayer(game, p, kind === 'sniper' ? SNIPER_DAMAGE : 1);
+          hurtPlayer(game, p, kind === 'sniper' ? SNIPER_DAMAGE : 1, b.owner);
         }
         return false;
       }
@@ -730,27 +730,37 @@ function reflect(b, sideX, sideY) {
 
 // Blast (rockets, grenades): chews a big hole in walls and hurts everyone nearby — the shooter too.
 // `direct` already took the direct-hit damage, so the blast skips them.
-function explode(game, x, y, direct, { damage = EXPLOSION_DAMAGE, radius = EXPLOSION_RADIUS } = {}) {
+function explode(game, x, y, direct, { damage = EXPLOSION_DAMAGE, radius = EXPLOSION_RADIUS, by = null } = {}) {
   breakWall(game, x, y, EXPLOSION_WALL_RADIUS * (radius / EXPLOSION_RADIUS));
   for (const p of Object.values(game.players)) {
     if (!p.alive || p === direct) continue;
-    if (Math.hypot(p.x - x, p.y - y) <= radius + playerRadius(p)) hurtPlayer(game, p, damage);
+    if (Math.hypot(p.x - x, p.y - y) <= radius + playerRadius(p)) hurtPlayer(game, p, damage, by);
   }
   emit(game, 'explode', { x, y, r: radius });
 }
 
-// Takes hit points away (bullets, explosions, meteors, sudden death).
-export function hurtPlayer(game, p, amount = 1) {
+// Takes hit points away (bullets, explosions, meteors, sudden death). `by` = who did it, if anyone:
+// eliminating another player heals you.
+export function hurtPlayer(game, p, amount = 1, by = null) {
   if (!p.alive) return;
   p.hp -= amount;
   p.hitCount += 1;
   if (p.hp <= 0) {
     p.hp = 0;
     p.alive = false;
-    emit(game, 'death', { x: p.x, y: p.y });
+    emit(game, 'death', { x: p.x, y: p.y, by });
+    const killer = by && by !== p.id ? game.players[by] : null;
+    if (killer?.alive) healPlayer(game, killer, KILL_HEAL);
   } else {
     emit(game, 'hit', { x: p.x, y: p.y });
   }
+}
+
+export function healPlayer(game, p, amount) {
+  const gained = Math.min(game.rules.maxHp - p.hp, amount);
+  if (gained <= 0) return;
+  p.hp += gained;
+  emit(game, 'heal', { pid: p.id, x: p.x, y: p.y, amount: gained });
 }
 
 // True if nothing painted blocks the straight line between two points (used by bots).
