@@ -471,7 +471,7 @@ function stepMeteors(game, dt) {
     for (const p of Object.values(game.players)) {
       if (p.alive && Math.hypot(p.x - m.x, p.y - m.y) <= m.r + playerRadius(p)) hurtPlayer(game, p, METEOR_DAMAGE);
     }
-    breakWall(game, m.x, m.y, m.r);
+    chip(game, m.x, m.y, breakWall(game, m.x, m.y, m.r), true);
     emit(game, 'meteor', { x: m.x, y: m.y, r: m.r });
     return false;
   });
@@ -531,7 +531,14 @@ function fireLaser(game, p) {
   const ty = dy > 0 ? (ARENA.h - p.y) / dy : dy < 0 ? -p.y / dy : Infinity;
   const len = Math.min(tx, ty);
   const x2 = p.x + dx * len, y2 = p.y + dy * len;
-  for (let d = 0; d <= len; d += CELL * 2) breakWall(game, p.x + dx * d, p.y + dy * d, LASER_WIDTH);
+  let lastChip = -Infinity;
+  for (let d = 0; d <= len; d += CELL * 2) {
+    const slot = breakWall(game, p.x + dx * d, p.y + dy * d, LASER_WIDTH);
+    if (slot && d - lastChip > 40) {
+      chip(game, p.x + dx * d, p.y + dy * d, slot);
+      lastChip = d;
+    }
+  }
   for (const o of Object.values(game.players)) {
     if (!o.alive || o.id === p.id) continue;
     const along = Math.max(0, Math.min(len, (o.x - p.x) * dx + (o.y - p.y) * dy));
@@ -654,11 +661,11 @@ function stepBullets(game, dt) {
           return false;
         }
         if (kind === 'sniper') {
-          breakWall(game, b.x, b.y, 6);   // punches straight through, leaving a small hole
+          chip(game, b.x, b.y, breakWall(game, b.x, b.y, 6));   // punches straight through, leaving a small hole
           continue;
         }
         if (kind === 'flame') {
-          breakWall(game, b.x, b.y, 7);   // flames eat walls fast
+          chip(game, b.x, b.y, breakWall(game, b.x, b.y, 7));   // flames eat walls fast
           return false;
         }
         // Work out which side was hit (before breaking it), so we know which way to reflect.
@@ -671,8 +678,9 @@ function stepBullets(game, dt) {
           emit(game, 'bounce', { x: b.x, y: b.y });
           continue;
         }
-        breakWall(game, b.x, b.y);
+        const slot = breakWall(game, b.x, b.y);
         emit(game, 'wall', { x: b.x, y: b.y });
+        chip(game, b.x, b.y, slot);
         if (b.bounces <= 0) return false;
         reflect(b, sideX, sideY);
         bounce(b, px, py);
@@ -733,7 +741,7 @@ function reflect(b, sideX, sideY) {
 // Blast (rockets, grenades): chews a big hole in walls and hurts everyone nearby — the shooter too.
 // `direct` already took the direct-hit damage, so the blast skips them.
 function explode(game, x, y, direct, { damage = EXPLOSION_DAMAGE, radius = EXPLOSION_RADIUS, by = null } = {}) {
-  breakWall(game, x, y, EXPLOSION_WALL_RADIUS * (radius / EXPLOSION_RADIUS));
+  chip(game, x, y, breakWall(game, x, y, EXPLOSION_WALL_RADIUS * (radius / EXPLOSION_RADIUS)), true);
   for (const p of Object.values(game.players)) {
     if (!p.alive || p === direct) continue;
     if (Math.hypot(p.x - x, p.y - y) <= radius + playerRadius(p)) hurtPlayer(game, p, damage, by);
@@ -785,9 +793,10 @@ function bounce(b, px, py) {
 // Knocks out wall cells around the impact. Anyone can break any wall, but each broken cell's ink
 // always goes back to the player who drew it. A drawer's ink + their cells on the map never exceeds
 // their pen capacity, so there's always room; the cap is just a safety net. Ink from a player who left is lost.
+// Returns the slot of a wall it broke (for the chip particles), or 0 if there was nothing to break.
 function breakWall(game, x, y, radius = BREAK_RADIUS) {
   const owners = playersBySlot(game);
-  let changed = false;
+  let changed = false, hitSlot = 0;
   forCellsAround(x, y, radius, (c, r, idx) => {
     const slot = game.walls[idx];
     if (!slot) return;
@@ -797,8 +806,15 @@ function breakWall(game, x, y, radius = BREAK_RADIUS) {
     const drawer = owners[slot];
     if (drawer) drawer.ink = Math.min(game.rules.penCapacity, drawer.ink + 1);
     changed = true;
+    hitSlot = slot;
   });
   if (changed) game.wallsVersion++;
+  return hitSlot;
+}
+
+// Little pixel chips flying off a wall that just got hit (purely visual; `big` for blasts).
+function chip(game, x, y, slot, big = false) {
+  if (slot) emit(game, 'chip', { x: Math.round(x), y: Math.round(y), slot, big });
 }
 
 function playersBySlot(game) {

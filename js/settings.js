@@ -22,9 +22,9 @@ export const DEFAULT_SETTINGS = {
 export const SETTING_DEFS = [
   { key: 'roundsToWin', label: 'ROUNDS TO WIN', options: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], format: (v) => `${v}` },
   { key: 'roundTime', label: 'ROUND TIME', options: [0, 45, 60, 90, 120, 180], format: (v) => (v ? `${v}S` : 'NO LIMIT') },
-  { key: 'maxHp', label: 'HEALTH', options: [5, 10, 15, 20], format: (v) => `${v} HITS` },
+  { key: 'maxHp', label: 'HEALTH', options: [5, 10, 15, 20, 25, 30], format: (v) => `${v} HITS` },
   { key: 'ink', label: 'INK', options: ['small', 'normal', 'large'], format: (v) => v.toUpperCase() },
-  { key: 'powerupInterval', label: 'POWERUPS', options: [0, 15, 30, 45, 60], format: (v) => (v ? `EVERY ${v}S` : 'OFF') },
+  { key: 'powerupInterval', label: 'POWERUPS', options: [0, 10, 15, 30, 45, 60], format: (v) => (v ? `EVERY ${v}S` : 'OFF') },
 ];
 
 // The subset of settings the simulation itself needs.

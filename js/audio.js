@@ -145,7 +145,7 @@ function onEvent(e) {
     case 'shoot': {
       if (e.w === 'laser') break;                              // the laser has its own charge + beam sounds
       const name = e.w === 'flamer' ? 'flame' : e.w && e.w !== 'pistol' ? e.w : e.ricochet ? 'shootRicochet' : 'shoot';
-      play(name, e.x, { rate: jitter(0.04), gain: e.w === 'shotgun' ? 0.55 : 0.45 });
+      play(name, e.x, { rate: jitter(0.04), gain: e.w === 'sniper' ? 0.95 : e.w === 'shotgun' ? 0.55 : 0.45 });
       break;
     }
     case 'explode': play('explode', e.x, { rate: jitter(0.06), gain: 0.7 }); break;

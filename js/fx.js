@@ -51,6 +51,15 @@ const RAINBOW = Array.from({ length: 64 }, (_, i) => {
   const f = (n) => Math.round(255 * Math.max(0, Math.min(1, Math.abs(((h + n) % 6) - 3) - 1)));
   return [f(0), f(4), f(2)];
 });
+const brightCache = {};
+function brighten(hex) {
+  if (!brightCache[hex]) {
+    const n = parseInt(hex.slice(1), 16);
+    const mix = (v) => Math.round(v + (255 - v) * 0.4).toString(16).padStart(2, '0');
+    brightCache[hex] = `#${mix((n >> 16) & 255)}${mix((n >> 8) & 255)}${mix(n & 255)}`;
+  }
+  return brightCache[hex];
+}
 const rainbowHex = (i) => `#${RAINBOW[i & 63].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
 
 const eraseCanvas = document.createElement('canvas');
@@ -110,6 +119,10 @@ export function updateFx(game, now, wallImage, localId) {
       floats.push({ pid: e.pid, text: `+${e.amount ?? 5} HP`, color: '#4ade80', start: now, dur: 1100, rise: true });
     } else if (e.type === 'inkRush' && !hidden(e.pid)) {
       burst(e.x, e.y, game.players[e.pid]?.color || '#3b82f6', 18, now, 'drop');
+    } else if (e.type === 'chip') {
+      // Pixel bits off a wall, a little brighter than the wall itself.
+      const owner = Object.values(game.players).find((p) => p.slot === e.slot);
+      burst(e.x, e.y, brighten(owner?.color || '#9ca3af'), e.big ? 16 : 7, now, 'chip');
     } else if (e.type === 'paintbomb') {
       for (let i = 0; i < 40; i++) burst(Math.random() * ARENA.w, Math.random() * ARENA.h, e.color, 1, now, 'drop');
     }
@@ -139,8 +152,9 @@ function makeBolt() {
 
 function burst(x, y, color, n, now, shape) {
   for (let i = 0; i < n; i++) {
-    const a = Math.random() * Math.PI * 2, v = 60 + Math.random() * 140;
-    sparks.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - (shape === 'plus' ? 80 : 0), color, born: now, life: 500 + Math.random() * 400, shape });
+    const a = Math.random() * Math.PI * 2, v = (shape === 'chip' ? 90 : 60) + Math.random() * 140;
+    const life = shape === 'chip' ? 220 + Math.random() * 260 : 500 + Math.random() * 400;
+    sparks.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - (shape === 'plus' ? 80 : 0), color, born: now, life, shape, big: Math.random() < 0.5 });
   }
   if (sparks.length > 300) sparks.splice(0, sparks.length - 300);
 }
@@ -337,6 +351,10 @@ export function drawPlayerFx(ctx, game, now, dt) {
       const x = snap(s.x), y = snap(s.y);
       ctx.fillRect(x - PX, y - PX * 3, PX * 2, PX * 6);
       ctx.fillRect(x - PX * 3, y - PX, PX * 6, PX * 2);
+    } else if (s.shape === 'chip') {
+      const size = s.big ? PX * 2 : PX;
+      ctx.fillStyle = s.color;
+      ctx.fillRect(snap(s.x), snap(s.y), size, size);
     } else drawSprite(ctx, disc(1, s.color, null), s.x, s.y);
   }
   ctx.globalAlpha = 1;

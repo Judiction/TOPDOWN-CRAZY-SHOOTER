@@ -67,7 +67,7 @@ shineCanvas.width = COLS;
 shineCanvas.height = ROWS;
 const shineCtx = shineCanvas.getContext('2d');
 const SHINE_BANDS = 3;                // highlight bands across the screen at once
-const SHINE_SPEED = 0.18;             // screen widths per second
+const SHINE_SPEED = 0.5;              // screen widths per second
 
 // Background art: rendered into a tiny canvas at ~30fps, then scaled up with no smoothing.
 const BG_FRAME_MS = 1000 / 30;
