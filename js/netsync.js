@@ -14,7 +14,7 @@ const ri = Math.round;
 // ---- inputs (client → host) ----
 
 const BITS = ['up', 'down', 'left', 'right', 'click', 'draw', 'reload'];
-const BULLET_KINDS = ['pistol', 'pellet', 'uzi', 'rocket'];
+const BULLET_KINDS = ['pistol', 'pellet', 'uzi', 'rocket', 'sniper', 'flame', 'grenade'];
 
 export function encodeInput(input) {
   let k = 0;
@@ -74,9 +74,12 @@ export function encodeSnapshot(match, { full, events, wallOps, acks }) {
       p.id, ri(p.x), ri(p.y), r2(p.aim), p.hp, p.alive ? 1 : 0, p.ammo, r1(p.reloading), p.ink,
       r1(p.fat), r1(p.small), p.ricochet, p.shields, r2(p.orbit), p.hitCount,
       p.pen ? [ri(p.pen.x), ri(p.pen.y)] : 0, acks[p.id] ?? 0, p.weapon, p.weaponAmmo,
+      r1(p.ghost), r1(p.speed), r2(p.charging),
     ]),
     b: g.bullets.map((b) => [ri(b.x), ri(b.y), ri(b.vx), ri(b.vy), b.ricochet ? 1 : 0, BULLET_KINDS.indexOf(b.kind)]),
     m: g.meteors.map((m) => [m.id, ri(m.x), ri(m.y), m.r, r2(m.t), m.dur]),
+    // Map events in progress (null when inactive).
+    fx: { blackout: g.blackout, gravity: g.gravity, mirror: g.mirror },
     u: g.powerups.map((u) => [u.id, u.type, ri(u.x), ri(u.y)]),
     e: events,
     wo: wallOps,
@@ -136,7 +139,7 @@ export function applySnapshot(view, snap, myId) {
   let mine = null;
   const seen = new Set();
   for (const a of snap.p) {
-    const [id, x, y, aim, hp, alive, ammo, reloading, ink, fat, small, ricochet, shields, orbit, hitCount, pen, ack, weapon, weaponAmmo] = a;
+    const [id, x, y, aim, hp, alive, ammo, reloading, ink, fat, small, ricochet, shields, orbit, hitCount, pen, ack, weapon, weaponAmmo, ghost, speed, charging] = a;
     const p = game.players[id];
     if (!p) continue;                                // names/colors not known yet; next full snapshot fixes it
     seen.add(id);
@@ -152,7 +155,7 @@ export function applySnapshot(view, snap, myId) {
       p.aim = aim;
     }
     Object.assign(p, {
-      hp, alive: !!alive, ammo, reloading, ink, fat, small, ricochet, shields, orbit, hitCount, weapon, weaponAmmo,
+      hp, alive: !!alive, ammo, reloading, ink, fat, small, ricochet, shields, orbit, hitCount, weapon, weaponAmmo, ghost, speed, charging,
       pen: pen ? { x: pen[0], y: pen[1] } : null,
     });
   }
@@ -160,6 +163,9 @@ export function applySnapshot(view, snap, myId) {
 
   game.bullets = snap.b.map(([x, y, vx, vy, ric, kind], i) => ({ id: i, x, y, vx, vy, ricochet: !!ric, kind: BULLET_KINDS[kind] ?? 'pistol' }));
   game.meteors = snap.m.map(([id, x, y, r, t, dur]) => ({ id, x, y, r, t, dur }));
+  game.blackout = snap.fx.blackout;
+  game.gravity = snap.fx.gravity;
+  game.mirror = snap.fx.mirror;
   game.powerups = snap.u.map(([id, type, x, y]) => ({ id, type, x, y }));
 
   for (const e of snap.e) game.events.push(e);
@@ -181,4 +187,5 @@ export function smoothRemotes(game, myId, dt) {
     b.y += b.vy * dt;
   }
   for (const m of game.meteors) m.t = Math.min(m.dur, m.t + dt);   // keep the warning flashing smoothly
+  for (const e of [game.blackout, game.gravity, game.mirror]) if (e) e.t = Math.min(e.dur, e.t + dt);
 }

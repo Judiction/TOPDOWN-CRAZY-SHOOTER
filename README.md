@@ -51,6 +51,10 @@ Every round starts with 3 random powerups on the map, and a new one appears ever
 | **RIC** (red) | Instant reload, and your next 30 shots ricochet 3 times (any gun except rockets). Careful, they can hit you too |
 | **SMOL** (blue) | Shrink to half size for 15 seconds |
 | **DEF** (green) | 12 orbiting spheres that block bullets. Each takes 2 hits |
+| **Ghost** | Invisible to everyone else for 8 seconds, and you can walk through walls. You can still be hit, and your bullets still stop at walls |
+| **Speed** | Move 60% faster for 10 seconds, leaving a trail |
+| **Ink Rush** | Your pen refills instantly. Your walls stay, so ink from them that won't fit in your pen later is lost |
+| **Medkit** | Heals 5 health |
 
 **Weapons** replace your pistol until their ammo runs out, then you're back to the pistol.
 
@@ -59,6 +63,10 @@ Every round starts with 3 random powerups on the map, and a new one appears ever
 | **Shotgun** (yellow) | Fires 6 pellets in a 30° arc. 60 pellets, so 10 shots |
 | **Uzi** (purple) | 90 fast bullets at twice the pistol's speed. They fizzle out after a short distance |
 | **Rocket** (gray) | 6 slower rockets that home in on the nearest enemy. A direct hit does 3 damage. The explosion does 2 damage to everyone nearby, you included, and blasts holes in walls |
+| **Laser** | One shot. After a short charge, a huge beam cuts through every wall to the edge of the arena and does 7 damage to everyone on the line |
+| **Sniper** | 10 very fast shots that punch straight through walls and do 4 damage each. Everyone can see your aim line |
+| **Flamer** | A short-range jet of fire that eats through walls and burns anyone in it |
+| **Grenade** | 4 grenades that bounce off walls and explode after 1.5 seconds, doing 3 damage to everyone in the blast |
 
 **Map events**
 
@@ -66,6 +74,13 @@ Every round starts with 3 random powerups on the map, and a new one appears ever
 |---|---|
 | **Eraser** (teal) | Every wall on the map vanishes and everyone's pen refills |
 | **Meteors** (dark) | Over the next 10 seconds, 3 meteors strike random spots, one at a time. Get out of the flashing circle before it explodes, or take 5 damage. The picker isn't safe either |
+| **Blackout** | For 8 seconds everything goes dark except a small light around your own cursor |
+| **Gravity Well** | For 6 seconds a vortex in the middle of the arena pulls in every player and bends every bullet |
+| **Paint Bomb** | Splats walls in the picker's color all over the map, using no ink |
+| **Mirror World** | The screen flips horizontally or vertically for 8 seconds. Your mouse still aims where you point, but WASD moves you in world directions |
+| **Ink Storm** | Lightning strikes and every wall on the map loses about a third of itself. The ink goes back to whoever drew it |
+
+Map events hit everyone, the player who picked them up included.
 
 ### Host settings
 

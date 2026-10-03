@@ -6,7 +6,7 @@ const PREFIX = 'clickclackboompow-v1-';
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';  // no I or O, so codes are easy to read out loud
 const CONNECT_TIMEOUT = 10000;
 
-export const PROTOCOL = 2;                      // bump when host/client messages change
+export const PROTOCOL = 3;                      // bump when host/client messages change
 
 export function makeCode() {
   let code = '';

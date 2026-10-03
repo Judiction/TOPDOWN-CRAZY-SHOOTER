@@ -6,7 +6,7 @@
 //   - Clients predict their own movement so it feels instant; everyone else is smoothed.
 // If the matchmaking server can't be reached, hosting still works offline with bots.
 
-import { emptyInput, newBackgroundSeed, applyMovement } from './game.js';
+import { ARENA, emptyInput, newBackgroundSeed, applyMovement, mirrorScale } from './game.js';
 import { createMatch, stepMatch, dropPlayer } from './match.js';
 import { createBrain, botInput } from './bots.js';
 import { createRoom, applyAction, canStart, addMember, removeMember } from './room.js';
@@ -472,7 +472,17 @@ function inMatch() {
 }
 
 function currentInput() {
-  return app.menuOpen ? { ...emptyInput(), mx: app.lastInput.mx, my: app.lastInput.my } : readInput();
+  if (app.menuOpen) return { ...emptyInput(), mx: app.lastInput.mx, my: app.lastInput.my };
+  const input = readInput();
+  // Mirror World flips the picture, so flip the mouse too: you still aim where you point on screen.
+  // (WASD keeps moving you in world directions — that's the disorienting part.)
+  const game = app.role === 'host' ? app.match?.game : client.view.game;
+  const m = game?.mirror;
+  if (m && mirrorScale(m) < 0) {
+    if (m.axis === 'x') input.mx = ARENA.w - input.mx;
+    else input.my = ARENA.h - input.my;
+  }
+  return input;
 }
 
 function pump() {

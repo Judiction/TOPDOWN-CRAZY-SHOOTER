@@ -36,7 +36,7 @@ export function botInput(game, id, brain, dt) {
   // Pick a target: nearest enemy, with ones behind walls counted as farther away.
   let target = null, targetVisible = false, targetDist = Infinity, bestScore = Infinity;
   for (const o of Object.values(game.players)) {
-    if (o.id === id || !o.alive) continue;
+    if (o.id === id || !o.alive || o.ghost > 0) continue;   // ghosts are invisible to bots too
     const d = Math.hypot(o.x - p.x, o.y - p.y);
     const visible = lineOfSight(game, p.x, p.y, o.x, o.y);
     const score = visible ? d : d * 1.6;

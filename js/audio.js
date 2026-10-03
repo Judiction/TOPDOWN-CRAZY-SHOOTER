@@ -14,8 +14,8 @@ const MAX_NEW_SOUNDS_PER_FRAME = 12;
 // Group name → max overlapping voices (oldest is cut when full) and min seconds between starts.
 const LIMITS = { shoot: 10, hit: 6, wall: 4, bounce: 4, shield: 4, pickup: 3, death: 3, explode: 4, meteorTick: 3 };
 const DEFAULT_LIMIT = 3;
-const MIN_GAP = { shoot: 0.012, wall: 0.025, bounce: 0.03, shield: 0.03 };
-const GROUP = { shootRicochet: 'shoot', shotgun: 'shoot', uzi: 'shoot', rocket: 'shoot', shieldBreak: 'shield', meteorBoom: 'explode' };
+const MIN_GAP = { shoot: 0.012, wall: 0.025, bounce: 0.03, shield: 0.03, flame: 0.05 };
+const GROUP = { shootRicochet: 'shoot', shotgun: 'shoot', uzi: 'shoot', rocket: 'shoot', sniper: 'shoot', grenade: 'shoot', laser: 'shoot', shieldBreak: 'shield', meteorBoom: 'explode' };
 const groupOf = (name) => GROUP[name] || name.split('_')[0];
 
 let ctx = null;
@@ -143,13 +143,23 @@ const jitter = (amount) => 1 + (Math.random() * 2 - 1) * amount;
 function onEvent(e) {
   switch (e.type) {
     case 'shoot': {
-      const name = e.w && e.w !== 'pistol' ? e.w : e.ricochet ? 'shootRicochet' : 'shoot';
+      if (e.w === 'laser') break;                              // the laser has its own charge + beam sounds
+      const name = e.w === 'flamer' ? 'flame' : e.w && e.w !== 'pistol' ? e.w : e.ricochet ? 'shootRicochet' : 'shoot';
       play(name, e.x, { rate: jitter(0.04), gain: e.w === 'shotgun' ? 0.55 : 0.45 });
       break;
     }
     case 'explode': play('explode', e.x, { rate: jitter(0.06), gain: 0.7 }); break;
     case 'meteor': play('meteorBoom', e.x, { gain: 0.9 }); break;
     case 'erase': play('erase', null, { gain: 0.7 }); break;
+    case 'laserCharge': play('laserCharge', e.x, { gain: 0.6 }); break;
+    case 'laser': play('laser', e.x, { gain: 0.8 }); break;
+    case 'heal': play('heal', e.x, { gain: 0.6 }); break;
+    case 'inkRush': play('inkRush', e.x, { gain: 0.6 }); break;
+    case 'blackout':
+    case 'gravity':
+    case 'paintbomb':
+    case 'mirror':
+    case 'inkstorm': play(e.type, null, { gain: 0.75 }); break;
     case 'hit': play('hit', e.x, { rate: jitter(0.05), gain: 0.4 }); break;
     case 'death': play('death', e.x, { gain: 0.9 }); break;
     case 'pickup': play(`pickup_${e.kind}`, e.x, { gain: 0.6 }); break;

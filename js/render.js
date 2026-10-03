@@ -1,9 +1,12 @@
 import {
   ARENA, COLS, ROWS, BULLET_RADIUS, MAG_SIZE, RELOAD_TIME,
   POWERUP_RADIUS, FAT_DURATION, SMALL_DURATION, SHIELD_RADIUS, SHIELD_HITS,
-  playerRadius, brushRadius, shieldPositions,
+  playerRadius, brushRadius, shieldPositions, mirrorScale, GHOST_DURATION, SPEED_DURATION,
 } from './game.js';
-import { updateFx, shakeOffset, drawBackgroundFx, drawWallFx, drawMeteors, drawSmoke, drawTopFx } from './fx.js';
+import {
+  updateFx, shakeOffset, drawBackgroundFx, drawWallFx, drawMeteors, drawSmoke, drawTopFx,
+  drawGravity, drawPlayerFx, drawBlackout, drawBanners,
+} from './fx.js';
 import { powerupIcon } from './icons.js';
 import { createBackground, BG_W, BG_H } from './background.js';
 import { PX, VIEW_W, VIEW_H, snap, disc, ring, drawSprite, rect, drawText, hexToRgb } from './pixel.js';
@@ -20,6 +23,19 @@ export const POWERUP_STYLE = {
   rocket:   { label: 'ROCKET',  fill: '#94a3b8', outline: '#1e293b' },
   eraser:   { label: 'ERASER',  fill: '#2dd4bf', outline: '#134e4a' },
   meteor:   { label: 'METEORS', fill: '#1e1b4b', outline: '#f97316' },
+  laser:    { label: 'LASER',   fill: '#164e63', outline: '#22d3ee' },
+  sniper:   { label: 'SNIPER',  fill: '#65a30d', outline: '#1a2e05' },
+  flamer:   { label: 'FLAMER',  fill: '#ea580c', outline: '#431407' },
+  grenade:  { label: 'GRENADE', fill: '#bef264', outline: '#365314' },
+  ghost:    { label: 'GHOST',   fill: '#6b7280', outline: '#111827' },
+  speed:    { label: 'SPEED',   fill: '#f43f5e', outline: '#4c0519' },
+  inkrush:  { label: 'INK RUSH', fill: '#bae6fd', outline: '#0c4a6e' },
+  medkit:   { label: 'MEDKIT',  fill: '#b91c1c', outline: '#450a0a' },
+  blackout: { label: 'BLACKOUT', fill: '#0a0a0a', outline: '#facc15' },
+  gravity:  { label: 'GRAVITY', fill: '#4c1d95', outline: '#c4b5fd' },
+  paintbomb: { label: 'PAINT BOMB', fill: '#fde68a', outline: '#92400e' },
+  mirror:   { label: 'MIRROR',  fill: '#e2e8f0', outline: '#334155' },
+  inkstorm: { label: 'INK STORM', fill: '#1d4ed8', outline: '#bfdbfe' },
 };
 
 const SHIELD_FRESH = '#86efac';
@@ -27,8 +43,10 @@ const SHIELD_CRACKED = '#16a34a';
 // Per bullet kind: pixel radius + colors. Ricochet rounds of any gun are red.
 const BULLET_STYLE = {
   pistol:   { r: 2, fill: '#ffe066', outline: '#7a5c00' },
-  pellet:   { r: 1, fill: '#ffb347', outline: '#7c2d12' },
-  uzi:      { r: 1, fill: '#e9d5ff', outline: '#3b0764' },
+  pellet:   { r: 2, fill: '#ffb347', outline: '#7c2d12' },
+  uzi:      { r: 2, fill: '#e9d5ff', outline: '#3b0764' },
+  sniper:   { r: 2, fill: '#ecfeff', outline: '#0e7490' },
+  grenade:  { r: 3, fill: '#84cc16', outline: '#1a2e05' },
   ricochet: { r: 2, fill: '#ff6b6b', outline: '#7f1d1d' },
 };
 const BAR_BG = '#000000aa';
@@ -83,12 +101,19 @@ export function initCanvas(canvas) {
 // localId = whose HUD to show; input = their current controls (for the pen cursor).
 let lastGame = null;
 
+let lastRender = performance.now();
+
 export function render(ctx, game, localId, input) {
   const now = performance.now();
-  // Everything below is in arena units; this maps them onto the half-resolution canvas
-  // (offset by any screen shake).
+  const dt = Math.min(0.1, (now - lastRender) / 1000);
+  lastRender = now;
+  // The world is drawn in arena units onto the half-resolution canvas, offset by any screen shake
+  // and flipped during Mirror World. The HUD at the end is drawn unflipped.
   const shake = shakeOffset(now);
-  ctx.setTransform(1 / PX, 0, 0, 1 / PX, shake.x / PX, shake.y / PX);
+  const flip = mirrorScale(game.mirror);
+  if (game.mirror?.axis === 'x') ctx.setTransform(flip / PX, 0, 0, 1 / PX, ((ARENA.w / 2) * (1 - flip) + shake.x) / PX, shake.y / PX);
+  else if (game.mirror) ctx.setTransform(1 / PX, 0, 0, flip / PX, shake.x / PX, ((ARENA.h / 2) * (1 - flip) + shake.y) / PX);
+  else ctx.setTransform(1 / PX, 0, 0, 1 / PX, shake.x / PX, shake.y / PX);
   ctx.imageSmoothingEnabled = false;
   if (game !== lastGame) {
     // New round = fresh game state: forget what we'd drawn and flashed for the old one.
@@ -97,7 +122,7 @@ export function render(ctx, game, localId, input) {
     for (const id of Object.keys(seenHits)) delete seenHits[id];
   }
 
-  updateFx(game, now, wallPixels);   // before drawWalls: the eraser effect needs the old walls
+  updateFx(game, now, wallPixels, localId);   // before drawWalls: the eraser effect needs the old walls
   drawBackground(ctx, game.bgSeed);
   drawHitFlash(ctx, game);
   drawBackgroundFx(ctx, now);
@@ -110,24 +135,46 @@ export function render(ctx, game, localId, input) {
   rect(ctx, 0, 0, PX * 2, ARENA.h, border);
   rect(ctx, ARENA.w - PX * 2, 0, PX * 2, ARENA.h, border);
 
+  drawGravity(ctx, game, now);
   drawMeteors(ctx, game);
   for (const u of game.powerups) drawPowerup(ctx, u);
-  for (const p of Object.values(game.players)) drawPlayer(ctx, p, game.rules);
+  for (const p of Object.values(game.players)) {
+    // Ghosts are completely invisible to everyone else — cursor, bars and name.
+    if (p.alive && p.ghost > 0 && p.id !== localId) continue;
+    drawPlayer(ctx, p, game.rules, p.id === localId, now);
+  }
+  drawPlayerFx(ctx, game, now, dt);
 
   drawSmoke(ctx, now);
-  for (const b of game.bullets) {
+  game.bullets.forEach((b, i) => {
     if (b.kind === 'rocket') drawRocket(ctx, b);
-    else {
+    else if (b.kind === 'flame') {
+      // Flickering fire pixels.
+      const fire = FLAME_COLORS[(i + Math.floor(now / 50)) % FLAME_COLORS.length];
+      drawSprite(ctx, disc(2 + (i % 2), fire, null), b.x, b.y);
+    } else {
       const base = BULLET_STYLE[b.kind] || BULLET_STYLE.pistol;
       const look = b.ricochet ? BULLET_STYLE.ricochet : base;
       drawSprite(ctx, disc(base.r, look.fill, look.outline), b.x, b.y);
+      if (b.kind === 'grenade' && Math.floor(now / 120) % 2) drawSprite(ctx, disc(1, '#ffffff', null), b.x, b.y);
     }
-  }
+  });
   drawTopFx(ctx, now);
 
   const me = game.players[localId];
-  if (me) drawHud(ctx, me, input);
+  drawBlackout(ctx, game, me);
+  if (me) drawPenCursor(ctx, me, input);
+
+  // Screen-space from here on: never shaken or mirrored.
+  ctx.setTransform(1 / PX, 0, 0, 1 / PX, 0, 0);
+  if (me) drawHud(ctx, me);
+  drawBanners(ctx, now);
 }
+
+const FLAME_COLORS = ['#fde047', '#fb923c', '#ef4444', '#fff7ae'];
+
+// SPEED BOOTS afterimages: recent positions of fast players.
+const trails = new Map();               // player id -> [{ x, y, aim, t }]
 
 function drawBackground(ctx, seed) {
   const now = performance.now();
@@ -284,14 +331,53 @@ function drawCursor(ctx, x, y, angle, radius, color) {
   ctx.fill(fill);
 }
 
-function drawPlayer(ctx, p, rules) {
+function drawPlayer(ctx, p, rules, isMe, now) {
   const r = playerRadius(p);
 
-  ctx.globalAlpha = p.alive ? 1 : 0.25;
+  // Speed boots: a trail of fading afterimages.
+  let trail = trails.get(p.id);
+  if (p.alive && p.speed > 0) {
+    if (!trail) trails.set(p.id, (trail = []));
+    trail.push({ x: p.x, y: p.y, aim: p.aim, t: now });
+  }
+  if (trail) {
+    while (trail.length && now - trail[0].t > 260) trail.shift();
+    trail.forEach((g, i) => {
+      if (i % 3) return;
+      ctx.globalAlpha = 0.45 * ((i + 1) / trail.length);
+      drawCursor(ctx, g.x, g.y, g.aim, r, p.color);
+    });
+    if (!trail.length) trails.delete(p.id);
+  }
+
+  // Your own ghost shows as a faint flicker so you know where you are; others don't see you at all.
+  ctx.globalAlpha = !p.alive ? 0.25 : p.ghost > 0 ? (Math.floor(now / 90) % 2 ? 0.3 : 0.45) : 1;
   drawCursor(ctx, p.x, p.y, p.aim, r, p.color);
   ctx.globalAlpha = 1;
 
   if (!p.alive) return;
+
+  // Laser charging: a pulsing glow that grows until the beam fires.
+  if (p.charging > 0) {
+    const k = 1 - p.charging / 0.45;
+    ctx.globalAlpha = 0.5 + 0.5 * (Math.floor(now / 50) % 2);
+    drawSprite(ctx, ring(Math.round(12 + 10 * k), '#22d3ee'), p.x, p.y);
+    drawSprite(ctx, ring(Math.round(6 + 6 * k), '#ffffff'), p.x, p.y);
+    ctx.globalAlpha = 1;
+  }
+
+  // Sniper: a dotted aim line everyone can see.
+  if (p.weapon === 'sniper') {
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = p.color;
+    const dx = Math.cos(p.aim), dy = Math.sin(p.aim);
+    for (let d = 30; d < 1500; d += 14) {
+      const x = p.x + dx * d, y = p.y + dy * d;
+      if (x < 0 || y < 0 || x > ARENA.w || y > ARENA.h) break;
+      ctx.fillRect(snap(x), snap(y), PX, PX);
+    }
+    ctx.globalAlpha = 1;
+  }
 
   // Defense spheres: bright green when intact, darker green once they've taken a hit.
   const sr = Math.round(SHIELD_RADIUS / PX);
@@ -312,8 +398,17 @@ function drawPlayer(ctx, p, rules) {
 
   // Thin reload bar under the health bar, visible to everyone.
   if (p.reloading > 0) rect(ctx, x, y + h + PX * 2, w * (1 - p.reloading / RELOAD_TIME), PX, '#e5e7eb');
-  // GET SMALL timer, below that.
-  if (p.small > 0) rect(ctx, x, y + h + PX * 4, w * (p.small / SMALL_DURATION), PX, POWERUP_STYLE.small.fill);
+  // Powerup timers, stacked below: GET SMALL, SPEED BOOTS, GHOST.
+  let ty = y + h + PX * 4;
+  for (const [left, total, color] of [
+    [p.small, SMALL_DURATION, POWERUP_STYLE.small.fill],
+    [p.speed, SPEED_DURATION, POWERUP_STYLE.speed.fill],
+    [p.ghost, GHOST_DURATION, '#e5e7eb'],
+  ]) {
+    if (left <= 0) continue;
+    rect(ctx, x, ty, w * (left / total), PX, color);
+    ty += PX * 2;
+  }
 
   // Vertical ink bar on the left of the cursor, in the player's color, filling from the bottom.
   const iw = 4, ih = 36;
@@ -331,7 +426,18 @@ function drawPlayer(ctx, p, rules) {
   drawText(ctx, p.name, px, y - PX * 2, { color: '#e5e7eb', align: 'center', valign: 'bottom' });
 }
 
-function drawHud(ctx, me, input) {
+// The pen circle while in draw mode (drawn in the world, so it flips with Mirror World).
+function drawPenCursor(ctx, me, input) {
+  if (!input.draw || !me.alive) return;
+  const color = me.ink > 0 ? me.color : '#f87171';
+  const r = Math.round(brushRadius(me) / PX);
+  // Dark rings just inside and outside keep it readable on any background.
+  drawSprite(ctx, ring(r + 1, '#000000'), input.mx, input.my);
+  drawSprite(ctx, ring(r - 1, '#000000'), input.mx, input.my);
+  drawSprite(ctx, ring(r, color), input.mx, input.my);
+}
+
+function drawHud(ctx, me) {
   if (!me.alive) return;
   // Ammo, bottom-left: the powerup weapon if you have one, otherwise the pistol magazine.
   const x = 16, y = ARENA.h - 12;
@@ -339,7 +445,8 @@ function drawHud(ctx, me, input) {
     const s = POWERUP_STYLE[me.weapon];
     const icon = powerupIcon(me.weapon);
     ctx.drawImage(icon, x, y - 34, icon.width * PX * 2, icon.height * PX * 2);
-    drawText(ctx, `${s.label} ${me.weaponAmmo}`, x + icon.width * PX * 2 + 12, y, { size: 16, color: s.fill, valign: 'bottom' });
+    const label = me.charging > 0 ? 'CHARGING...' : `${s.label} ${me.weaponAmmo}`;
+    drawText(ctx, label, x + icon.width * PX * 2 + 12, y, { size: 16, color: s.fill === '#0a0a0a' ? '#ffffff' : s.fill, valign: 'bottom' });
   } else if (me.reloading > 0) {
     drawText(ctx, `RELOADING ${me.reloading.toFixed(1)}s`, x, y, { size: 16, color: '#facc15', valign: 'bottom' });
   } else {
@@ -349,15 +456,6 @@ function drawHud(ctx, me, input) {
     drawText(ctx, `RICOCHET x${me.ricochet}`, x, y - 44, { size: 16, color: POWERUP_STYLE.ricochet.fill, valign: 'bottom' });
   }
 
-  // Pen cursor while in draw mode.
-  if (input.draw && me.alive) {
-    const color = me.ink > 0 ? me.color : '#f87171';
-    const r = Math.round(brushRadius(me) / PX);
-    // Dark rings just inside and outside keep it readable on any background.
-    drawSprite(ctx, ring(r + 1, '#000000'), input.mx, input.my);
-    drawSprite(ctx, ring(r - 1, '#000000'), input.mx, input.my);
-    drawSprite(ctx, ring(r, color), input.mx, input.my);
-  }
 }
 
 // Menus: just the generative art.

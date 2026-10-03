@@ -31,8 +31,19 @@ export const WEAPONS = {
   shotgun: { ammo: 60, perShot: 6, cooldown: 0.45, speed: BULLET_SPEED, pellets: 6, spread: 0.52 },  // 10 shots, 30° arc
   uzi: { ammo: 90, perShot: 1, cooldown: 0.06, speed: BULLET_SPEED * 2, range: 380, spread: 0.06 },
   rocket: { ammo: 6, perShot: 1, cooldown: 0.6, speed: BULLET_SPEED * 0.75 },
+  laser: { ammo: 1, perShot: 1, cooldown: 0, charge: 0.45 },               // one huge beam after a short charge
+  sniper: { ammo: 10, perShot: 1, cooldown: 0.8, speed: BULLET_SPEED * 3 },
+  flamer: { ammo: 150, perShot: 1, cooldown: 0.03, speed: 600, spread: 0.25, life: 0.3 },
+  grenade: { ammo: 4, perShot: 1, cooldown: 0.7, speed: 520, fuse: 1.5 },
 };
-export const WEAPON_TYPES = ['shotgun', 'uzi', 'rocket'];
+export const WEAPON_TYPES = ['shotgun', 'uzi', 'rocket', 'laser', 'sniper', 'flamer', 'grenade'];
+export const LASER_DAMAGE = 7;
+export const LASER_WIDTH = 14;        // half-width of the beam, px
+export const SNIPER_DAMAGE = 4;       // and it punches through painted walls
+export const FLAME_BURN = 0.15;       // a player can be burned at most once per this many seconds
+export const GRENADE_DAMAGE = 3;
+export const GRENADE_RADIUS = 75;
+const GRENADE_FRICTION = 0.9;         // grenades slow down as they roll
 export const ROCKET_TURN = 3.2;       // radians per second a rocket can turn toward its target
 export const ROCKET_LIFE = 5;         // seconds before a rocket that hit nothing blows up anyway
 export const ROCKET_HIT_DAMAGE = 3;   // direct hit
@@ -41,9 +52,14 @@ export const EXPLOSION_RADIUS = 60;
 export const EXPLOSION_WALL_RADIUS = 30;
 
 // ---- powerups ----
-export const POWERUP_TYPES = ['fat', 'ricochet', 'small', 'defense', 'shotgun', 'uzi', 'rocket', 'eraser', 'meteor'];
-// Relative spawn chances; the map-wide ones are a little rarer.
-export const POWERUP_WEIGHTS = { fat: 1, ricochet: 1, small: 1, defense: 1, shotgun: 1, uzi: 1, rocket: 1, eraser: 0.6, meteor: 0.6 };
+export const POWERUP_TYPES = [
+  'fat', 'ricochet', 'small', 'defense', 'ghost', 'speed', 'inkrush', 'medkit',              // player effects
+  'shotgun', 'uzi', 'rocket', 'laser', 'sniper', 'flamer', 'grenade',                        // weapons
+  'eraser', 'meteor', 'blackout', 'gravity', 'paintbomb', 'mirror', 'inkstorm',             // map events
+];
+export const MAP_EVENTS = ['eraser', 'meteor', 'blackout', 'gravity', 'paintbomb', 'mirror', 'inkstorm'];
+// Relative spawn chances; the map-wide events are rarer.
+export const POWERUP_WEIGHTS = Object.fromEntries(POWERUP_TYPES.map((t) => [t, MAP_EVENTS.includes(t) ? 0.5 : 1]));
 export const ROUND_START_POWERUPS = 3;
 export const POWERUP_RADIUS = 20;
 export const POWERUP_INTERVAL = 30;   // default seconds between random spawns (0 = powerups off)
@@ -63,6 +79,18 @@ export const METEOR_GAP = 3.3;        // seconds between warnings (all three lan
 export const METEOR_GROW = 3;         // seconds a warning circle grows before impact
 export const METEOR_RADIUS = 80;
 export const METEOR_DAMAGE = 5;
+export const GHOST_DURATION = 8;      // invisible to others + walk through walls
+export const SPEED_DURATION = 10;
+export const SPEED_MULT = 1.6;
+export const MEDKIT_HEAL = 5;
+export const BLACKOUT_DURATION = 8;
+export const GRAVITY_DURATION = 6;
+const GRAVITY_PULL = 40000;           // pull speed = GRAVITY_PULL / distance (px/s), capped below
+const GRAVITY_MAX_PULL = 230;
+export const MIRROR_DURATION = 8;
+export const MIRROR_FLIP_TIME = 0.5;  // seconds of the flip animation at each end
+export const PAINT_SPLATS = 12;
+export const INK_STORM_FRACTION = 0.3;
 
 // rules: the host's settings that change the simulation. firstEventId lets event ids keep rising
 // across rounds, so listeners never mistake a new round's events for ones they already handled.
@@ -85,6 +113,9 @@ export function createGame(rules = {}, { firstEventId = 1 } = {}) {
     nextPowerupId: 1,
     powerupTimer: r.powerupInterval,
     meteors: [],                      // warning circles: { id, x, y, r, t, dur }
+    blackout: null,                   // map events in progress: { t, dur } (+ x, y for gravity, axis for mirror)
+    gravity: null,
+    mirror: null,
     meteorQueue: [],                  // game times at which the next warnings appear
     nextMeteorId: 1,
     // Recent things that happened (shots, hits, pickups...), for sounds and effects. Each has a
@@ -128,6 +159,10 @@ export function respawnPlayer(game, id, x, y) {
     fat: 0,                           // seconds of FAT WALLS left
     small: 0,                         // seconds of GET SMALL left
     ricochet: 0,                      // ricochet shots left
+    ghost: 0,                         // seconds of GHOST left
+    speed: 0,                         // seconds of SPEED BOOTS left
+    charging: 0,                      // laser charge-up seconds left
+    burnUntil: 0,                     // game time before which flames can't burn this player again
     shields: null,                    // DEFENSE BALLS: hits left per sphere (0 = broken)
     orbit: 0,                         // current rotation of the shields
   });
@@ -166,6 +201,13 @@ export function meteorFlashes(m) {
   return Math.floor(2 * t + (6 * t * t) / m.dur);
 }
 
+// Mirror World: the current flip of the screen, from 1 (normal) through 0 to -1 (flipped) and back.
+export function mirrorScale(m) {
+  if (!m) return 1;
+  const k = Math.min(1, m.t / MIRROR_FLIP_TIME, (m.dur - m.t) / MIRROR_FLIP_TIME);
+  return Math.cos(Math.PI * Math.max(0, k));
+}
+
 // mx/my = cursor position in arena coordinates. click = left mouse held.
 export function emptyInput() {
   return { up: false, down: false, left: false, right: false, mx: 0, my: 0, click: false, draw: false, reload: false };
@@ -177,7 +219,8 @@ export function emit(game, type, data) {
   game.events.push({ id: game.nextEventId++, type, ...data });
 }
 
-// WASD movement with wall collision. Exported so clients can predict their own movement locally.
+// WASD movement with wall collision (+ speed boots and the gravity well's pull).
+// Exported so clients can predict their own movement locally.
 export function applyMovement(game, p, input, dt) {
   let dx = (input.right ? 1 : 0) - (input.left ? 1 : 0);
   let dy = (input.down ? 1 : 0) - (input.up ? 1 : 0);
@@ -186,7 +229,18 @@ export function applyMovement(game, p, input, dt) {
     dx /= len;
     dy /= len;
   }
-  movePlayer(game, p, dx * PLAYER_SPEED * dt, dy * PLAYER_SPEED * dt);
+  const speed = PLAYER_SPEED * (p.speed > 0 ? SPEED_MULT : 1);
+  const pull = gravityPull(game, p.x, p.y);
+  movePlayer(game, p, (dx * speed + pull.x) * dt, (dy * speed + pull.y) * dt);
+}
+
+// Velocity the gravity well drags things at, toward its center.
+function gravityPull(game, x, y) {
+  const g = game.gravity;
+  if (!g) return { x: 0, y: 0 };
+  const d = Math.hypot(g.x - x, g.y - y) || 1;
+  const v = Math.min(GRAVITY_MAX_PULL, GRAVITY_PULL / d);
+  return { x: ((g.x - x) / d) * v, y: ((g.y - y) / d) * v };
 }
 
 export function step(game, inputs, dt) {
@@ -199,6 +253,8 @@ export function step(game, inputs, dt) {
 
     p.fat = Math.max(0, p.fat - dt);
     p.small = Math.max(0, p.small - dt);
+    p.ghost = Math.max(0, p.ghost - dt);
+    p.speed = Math.max(0, p.speed - dt);
     if (p.shields) p.orbit = (p.orbit + SHIELD_SPIN * dt) % (Math.PI * 2);
 
     applyMovement(game, p, input, dt);
@@ -226,13 +282,23 @@ export function step(game, inputs, dt) {
     } else {
       p.pen = null;
       // Small epsilon: repeated float subtraction leaves crumbs like 1e-17 that would cost an extra tick.
-      const ready = input.click && p.cooldown < 1e-6;
+      const ready = input.click && p.cooldown < 1e-6 && p.charging === 0;
       if (ready && (p.weapon !== 'pistol' || (p.reloading === 0 && p.ammo > 0))) shoot(game, p);
+    }
+
+    // Laser charge-up: the beam fires where you're aiming when the charge completes.
+    if (p.charging > 0) {
+      p.charging = Math.max(0, p.charging - dt);
+      if (p.charging === 0) fireLaser(game, p);
     }
   }
 
   stepBullets(game, dt);
   stepMeteors(game, dt);
+  for (const key of ['blackout', 'gravity', 'mirror']) {
+    const e = game[key];
+    if (e && (e.t += dt) >= e.dur) game[key] = null;
+  }
 
   if (game.rules.powerupInterval > 0) game.powerupTimer -= dt;
   if (game.rules.powerupInterval > 0 && game.powerupTimer <= 0) {
@@ -304,7 +370,27 @@ function applyPowerup(game, p, type) {
     p.weapon = type;
     p.weaponAmmo = WEAPONS[type].ammo;
     p.cooldown = 0;
-  } else if (type === 'eraser') eraseWalls(game);
+  } else if (type === 'ghost') p.ghost = GHOST_DURATION;
+  else if (type === 'speed') p.speed = SPEED_DURATION;
+  else if (type === 'medkit') {
+    p.hp = Math.min(game.rules.maxHp, p.hp + MEDKIT_HEAL);
+    emit(game, 'heal', { pid: p.id, x: p.x, y: p.y });
+  } else if (type === 'inkrush') {
+    // Pen refills; your walls stay. Ink coming back from them later is still capped by the pen size.
+    p.ink = game.rules.penCapacity;
+    emit(game, 'inkRush', { pid: p.id, x: p.x, y: p.y });
+  } else if (type === 'blackout') {
+    game.blackout = { t: 0, dur: BLACKOUT_DURATION };
+    emit(game, 'blackout', {});
+  } else if (type === 'gravity') {
+    game.gravity = { x: ARENA.w / 2, y: ARENA.h / 2, t: 0, dur: GRAVITY_DURATION };
+    emit(game, 'gravity', {});
+  } else if (type === 'mirror') {
+    game.mirror = { axis: Math.random() < 0.5 ? 'x' : 'y', t: 0, dur: MIRROR_DURATION };
+    emit(game, 'mirror', { axis: game.mirror.axis });
+  } else if (type === 'paintbomb') paintBomb(game, p);
+  else if (type === 'inkstorm') inkStorm(game);
+  else if (type === 'eraser') eraseWalls(game);
   else if (type === 'meteor') {
     // Queue up the strikes after any that are already coming.
     let at = Math.max(game.time + METEOR_FIRST, ...game.meteorQueue.map((t) => t + METEOR_GAP));
@@ -319,6 +405,48 @@ function eraseWalls(game) {
   game.wallLog?.push(-1, 0);          // "-1" = clear everything (see netsync)
   for (const p of Object.values(game.players)) p.ink = game.rules.penCapacity;
   emit(game, 'erase', {});
+}
+
+// PAINT BOMB: splats of the picker's color all over the map, free of charge.
+function paintBomb(game, p) {
+  for (let i = 0; i < PAINT_SPLATS; i++) {
+    const x = 60 + Math.random() * (ARENA.w - 120), y = 60 + Math.random() * (ARENA.h - 120);
+    const r = 16 + Math.random() * 22;
+    paintBlob(game, p.slot, x, y, r);
+    // A few droplets around each splat.
+    for (let k = 0; k < 4; k++) {
+      const a = Math.random() * Math.PI * 2, d = r + 6 + Math.random() * 18;
+      paintBlob(game, p.slot, x + Math.cos(a) * d, y + Math.sin(a) * d, 4 + Math.random() * 5);
+    }
+  }
+  game.wallsVersion++;
+  emit(game, 'paintbomb', { color: p.color });
+}
+
+function paintBlob(game, slot, x, y, radius) {
+  const keepClear = clearZones(game);
+  forCellsAround(x, y, radius, (c, r, idx) => {
+    if (game.walls[idx]) return;
+    if (((c + 0.5) * CELL - x) ** 2 + ((r + 0.5) * CELL - y) ** 2 > radius * radius) return;
+    if (keepClear.some((k) => circleOverlapsCell(k.x, k.y, k.r + PAINT_CLEARANCE, c, r))) return;
+    game.walls[idx] = slot;
+    game.wallLog?.push(idx, slot);
+  });
+}
+
+// INK STORM: every wall loses a random chunk of its cells (ink goes back to the drawers, capped).
+function inkStorm(game) {
+  const owners = playersBySlot(game);
+  for (let i = 0; i < game.walls.length; i++) {
+    const slot = game.walls[i];
+    if (!slot || Math.random() >= INK_STORM_FRACTION) continue;
+    game.walls[i] = 0;
+    game.wallLog?.push(i, 0);
+    const drawer = owners[slot];
+    if (drawer) drawer.ink = Math.min(game.rules.penCapacity, drawer.ink + 1);
+  }
+  game.wallsVersion++;
+  emit(game, 'inkstorm', {});
 }
 
 // ---- meteors ----
@@ -377,16 +505,46 @@ function shoot(game, p) {
     fire(game, p, p.aim + (Math.random() * 2 - 1) * def.spread, def.speed, { kind: 'uzi', ricochet, range: def.range });
   } else if (kind === 'rocket') {
     fire(game, p, p.aim, def.speed, { kind: 'rocket' });
+  } else if (kind === 'sniper') {
+    fire(game, p, p.aim, def.speed, { kind: 'sniper' });
+  } else if (kind === 'flamer') {
+    const speed = def.speed * (0.8 + Math.random() * 0.4);
+    fire(game, p, p.aim + (Math.random() * 2 - 1) * def.spread, speed, { kind: 'flame', ricochet, life: def.life });
+  } else if (kind === 'grenade') {
+    fire(game, p, p.aim, def.speed, { kind: 'grenade', life: def.fuse });
+  } else if (kind === 'laser') {
+    p.charging = def.charge;          // the beam fires when the charge completes (see step)
+    emit(game, 'laserCharge', { x: p.x, y: p.y });
   }
   p.weaponAmmo -= def.perShot;
-  if (p.weaponAmmo <= 0) {
+  if (p.weaponAmmo <= 0 && kind !== 'laser') {
     p.weapon = 'pistol';
     p.weaponAmmo = 0;
   }
 }
 
+// LASER: an instant beam from the shooter to the arena edge. It cuts every wall on its path and
+// hits every player on the line (not the shooter). Shields don't stop it.
+function fireLaser(game, p) {
+  const dx = Math.cos(p.aim), dy = Math.sin(p.aim);
+  const tx = dx > 0 ? (ARENA.w - p.x) / dx : dx < 0 ? -p.x / dx : Infinity;
+  const ty = dy > 0 ? (ARENA.h - p.y) / dy : dy < 0 ? -p.y / dy : Infinity;
+  const len = Math.min(tx, ty);
+  const x2 = p.x + dx * len, y2 = p.y + dy * len;
+  for (let d = 0; d <= len; d += CELL * 2) breakWall(game, p.x + dx * d, p.y + dy * d, LASER_WIDTH);
+  for (const o of Object.values(game.players)) {
+    if (!o.alive || o.id === p.id) continue;
+    const along = Math.max(0, Math.min(len, (o.x - p.x) * dx + (o.y - p.y) * dy));
+    const miss = Math.hypot(o.x - (p.x + dx * along), o.y - (p.y + dy * along));
+    if (miss <= LASER_WIDTH + playerRadius(o)) hurtPlayer(game, o, LASER_DAMAGE);
+  }
+  emit(game, 'laser', { x: p.x, y: p.y, x2, y2, color: p.color });
+  p.weapon = 'pistol';
+  p.weaponAmmo = 0;
+}
+
 // Bullets start at the player's center (never inside a wall) and travel out from there.
-function fire(game, p, angle, speed, { kind = 'pistol', ricochet = false, range = Infinity } = {}) {
+function fire(game, p, angle, speed, { kind = 'pistol', ricochet = false, range = Infinity, life = Infinity } = {}) {
   game.bullets.push({
     id: game.nextBulletId++,
     owner: p.id,
@@ -399,7 +557,7 @@ function fire(game, p, angle, speed, { kind = 'pistol', ricochet = false, range 
     bounces: ricochet ? RICOCHET_BOUNCES : 0,
     bounced: false,                   // a ricochet bullet can hurt its own shooter once it has bounced
     range,                            // px left before it fizzles (uzi)
-    life: kind === 'rocket' ? ROCKET_LIFE : Infinity,
+    life: kind === 'rocket' ? ROCKET_LIFE : life,     // seconds left: rocket timeout, flame burnout, grenade fuse
   });
 }
 
@@ -411,7 +569,7 @@ function canHurt(b, p) {
 function steerRocket(game, b, dt) {
   let target = null, best = Infinity;
   for (const p of Object.values(game.players)) {
-    if (!p.alive || p.id === b.owner) continue;
+    if (!p.alive || p.id === b.owner || p.ghost > 0) continue;    // can't lock onto what you can't see
     const d = (p.x - b.x) ** 2 + (p.y - b.y) ** 2;
     if (d < best) {
       best = d;
@@ -431,13 +589,25 @@ function steerRocket(game, b, dt) {
 function stepBullets(game, dt) {
   const players = Object.values(game.players);
   game.bullets = game.bullets.filter((b) => {
-    const rocket = b.kind === 'rocket';
-    if (rocket) {
-      steerRocket(game, b, dt);
+    const kind = b.kind;
+    if (kind === 'rocket') steerRocket(game, b, dt);
+    if (kind === 'grenade') {
+      const f = Math.exp(-GRENADE_FRICTION * dt);
+      b.vx *= f;
+      b.vy *= f;
+    }
+    if (game.gravity) {
+      // The gravity well bends everything that flies.
+      const pull = gravityPull(game, b.x, b.y);
+      b.vx += pull.x * 4 * dt;
+      b.vy += pull.y * 4 * dt;
+    }
+    if (b.life !== Infinity) {
       b.life -= dt;
       if (b.life <= 0) {
-        explode(game, b.x, b.y, null);
-        return false;
+        if (kind === 'rocket') explode(game, b.x, b.y, null);
+        else if (kind === 'grenade') explode(game, b.x, b.y, null, { damage: GRENADE_DAMAGE, radius: GRENADE_RADIUS });
+        return false;                 // flames just burn out
       }
     }
     // Bullets move faster than a cell per tick, so march them in small sub-steps to avoid skipping through walls.
@@ -452,13 +622,21 @@ function stepBullets(game, dt) {
         if (b.range <= 0) return false;
       }
 
-      // Arena edge: ricochet bullets bounce, rockets blow up, normal ones vanish.
+      // Arena edge: rockets blow up, grenades and ricochet rounds bounce, everything else vanishes.
       const outX = b.x < 0 || b.x >= ARENA.w;
       const outY = b.y < 0 || b.y >= ARENA.h;
       if (outX || outY) {
-        if (rocket) {
+        if (kind === 'rocket') {
           explode(game, clamp(b.x, 0, ARENA.w - 1), clamp(b.y, 0, ARENA.h - 1), null);
           return false;
+        }
+        if (kind === 'grenade') {
+          if (outX) b.vx = -b.vx;
+          if (outY) b.vy = -b.vy;
+          b.x = px;
+          b.y = py;
+          emit(game, 'bounce', { x: b.x, y: b.y });
+          continue;
         }
         if (b.bounces <= 0) return false;
         if (outX) b.vx = -b.vx;
@@ -469,23 +647,32 @@ function stepBullets(game, dt) {
       }
 
       if (wallAt(game, b.x, b.y)) {
-        if (rocket) {
+        if (kind === 'rocket') {
           explode(game, b.x, b.y, null);
+          return false;
+        }
+        if (kind === 'sniper') {
+          breakWall(game, b.x, b.y, 6);   // punches straight through, leaving a small hole
+          continue;
+        }
+        if (kind === 'flame') {
+          breakWall(game, b.x, b.y, 7);   // flames eat walls fast
           return false;
         }
         // Work out which side was hit (before breaking it), so we know which way to reflect.
         const sideX = wallAt(game, b.x, py);
         const sideY = wallAt(game, px, b.y);
+        if (kind === 'grenade') {
+          reflect(b, sideX, sideY);
+          b.x = px;
+          b.y = py;
+          emit(game, 'bounce', { x: b.x, y: b.y });
+          continue;
+        }
         breakWall(game, b.x, b.y);
         emit(game, 'wall', { x: b.x, y: b.y });
         if (b.bounces <= 0) return false;
-        if (sideX) b.vx = -b.vx;
-        if (sideY) b.vy = -b.vy;
-        if (!sideX && !sideY) {
-          // Hit a corner head-on.
-          b.vx = -b.vx;
-          b.vy = -b.vy;
-        }
+        reflect(b, sideX, sideY);
         bounce(b, px, py);
         continue;
       }
@@ -500,36 +687,56 @@ function stepBullets(game, dt) {
           p.shields[sphere.i] -= 1;
           emit(game, 'shield', { x: b.x, y: b.y, broke: p.shields[sphere.i] <= 0 });
           if (p.shields.every((hits) => hits <= 0)) p.shields = null;
-          if (rocket) explode(game, b.x, b.y, null);
+          if (kind === 'rocket') explode(game, b.x, b.y, null);
+          if (kind === 'grenade') explode(game, b.x, b.y, null, { damage: GRENADE_DAMAGE, radius: GRENADE_RADIUS });
           return false;
         }
 
         // Bullets never ricochet off players — they just hit.
         const r = playerRadius(p) + BULLET_RADIUS;
-        if ((p.x - b.x) ** 2 + (p.y - b.y) ** 2 <= r * r) {
-          if (rocket) {
-            hurtPlayer(game, p, ROCKET_HIT_DAMAGE);
-            explode(game, b.x, b.y, p);
-          } else {
+        if ((p.x - b.x) ** 2 + (p.y - b.y) ** 2 > r * r) continue;
+        if (kind === 'flame') {
+          // Flames pass through players, burning them at a limited rate.
+          if (game.time >= p.burnUntil) {
+            p.burnUntil = game.time + FLAME_BURN;
             hurtPlayer(game, p);
           }
-          return false;
+          continue;
         }
+        if (kind === 'rocket') {
+          hurtPlayer(game, p, ROCKET_HIT_DAMAGE);
+          explode(game, b.x, b.y, p);
+        } else if (kind === 'grenade') {
+          explode(game, b.x, b.y, null, { damage: GRENADE_DAMAGE, radius: GRENADE_RADIUS });
+        } else {
+          hurtPlayer(game, p, kind === 'sniper' ? SNIPER_DAMAGE : 1);
+        }
+        return false;
       }
     }
     return true;
   });
 }
 
-// Rocket blast: chews a big hole in walls and hurts everyone nearby — the shooter too.
+function reflect(b, sideX, sideY) {
+  if (sideX) b.vx = -b.vx;
+  if (sideY) b.vy = -b.vy;
+  if (!sideX && !sideY) {
+    // Hit a corner head-on.
+    b.vx = -b.vx;
+    b.vy = -b.vy;
+  }
+}
+
+// Blast (rockets, grenades): chews a big hole in walls and hurts everyone nearby — the shooter too.
 // `direct` already took the direct-hit damage, so the blast skips them.
-function explode(game, x, y, direct) {
-  breakWall(game, x, y, EXPLOSION_WALL_RADIUS);
+function explode(game, x, y, direct, { damage = EXPLOSION_DAMAGE, radius = EXPLOSION_RADIUS } = {}) {
+  breakWall(game, x, y, EXPLOSION_WALL_RADIUS * (radius / EXPLOSION_RADIUS));
   for (const p of Object.values(game.players)) {
     if (!p.alive || p === direct) continue;
-    if (Math.hypot(p.x - x, p.y - y) <= EXPLOSION_RADIUS + playerRadius(p)) hurtPlayer(game, p, EXPLOSION_DAMAGE);
+    if (Math.hypot(p.x - x, p.y - y) <= radius + playerRadius(p)) hurtPlayer(game, p, damage);
   }
-  emit(game, 'explode', { x, y });
+  emit(game, 'explode', { x, y, r: radius });
 }
 
 // Takes hit points away (bullets, explosions, meteors, sudden death).
@@ -603,12 +810,16 @@ function paintStroke(game, p, x, y) {
   p.pen = { x, y };
 }
 
-function paintDot(game, painter, x, y) {
-  // Never paint on top of a player or a powerup — the wall flows around them instead.
-  const keepClear = [
+// Never paint on top of a player or a powerup — the wall flows around them instead.
+function clearZones(game) {
+  return [
     ...Object.values(game.players).filter((p) => p.alive).map((p) => ({ x: p.x, y: p.y, r: playerRadius(p) })),
     ...game.powerups.map((u) => ({ x: u.x, y: u.y, r: POWERUP_RADIUS })),
   ];
+}
+
+function paintDot(game, painter, x, y) {
+  const keepClear = clearZones(game);
   const brush = brushRadius(painter);
   let changed = false;
   forCellsAround(x, y, brush, (c, r, idx) => {
@@ -627,6 +838,12 @@ function paintDot(game, painter, x, y) {
 
 function movePlayer(game, p, dx, dy) {
   const R = playerRadius(p);
+  if (p.ghost > 0) {
+    // Ghosts drift straight through walls.
+    p.x = clamp(p.x + dx, R, ARENA.w - R);
+    p.y = clamp(p.y + dy, R, ARENA.h - R);
+    return;
+  }
   // Safety valve: if a player ends up overlapping a wall (e.g. growing back from GET SMALL next to one),
   // let them move freely until they're out.
   const stuck = circleHitsWall(game, p.x, p.y, R);

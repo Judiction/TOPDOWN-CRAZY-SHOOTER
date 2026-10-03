@@ -137,6 +137,113 @@ export const SFX = {
   pickup_rocket: () => pickup(64),     // E4
   pickup_eraser: () => pickup(84),     // C6
   pickup_meteor: () => pickup(60),     // C4
+  pickup_laser: () => pickup(71),
+  pickup_sniper: () => pickup(62),
+  pickup_flamer: () => pickup(65),
+  pickup_grenade: () => pickup(63),
+  pickup_medkit: () => pickup(76),
+  pickup_inkrush: () => pickup(81),
+  pickup_blackout: () => pickup(57),
+  pickup_gravity: () => pickup(55),
+  pickup_paintbomb: () => pickup(78),
+  pickup_mirror: () => pickup(73),
+  pickup_inkstorm: () => pickup(59),
+  // Ghost: a spooky, wobbling triangle that sinks away.
+  pickup_ghost() {
+    const out = samples(0.45);
+    tone(out, { dur: 0.45, wave: 'triangle', freq: (t) => sweep(900, 300, 0.45)(t) * (1 + 0.06 * Math.sin(t * TAU * 9)), vol: decay(0.45, 0.6, 0.45) });
+    tone(out, { t0: 0.05, dur: 0.38, duty: 0.125, freq: (t) => sweep(1350, 450, 0.38)(t) * (1 + 0.06 * Math.sin(t * TAU * 9)), vol: decay(0.38, 0.8, 0.15) });
+    return out;
+  },
+  // Speed boots: a fast upward zip.
+  pickup_speed() {
+    const out = samples(0.28);
+    for (let i = 0; i < 3; i++) tone(out, { t0: i * 0.07, dur: 0.07, duty: 0.125, freq: sweep(500 * (i + 1), 1400 * (i + 1), 0.07), vol: 0.3 });
+    tone(out, { t0: 0.21, dur: 0.07, duty: 0.25, freq: midi(96), vol: decay(0.07, 1, 0.3) });
+    return out;
+  },
+  // Laser: a rising charge whine, then a huge zap.
+  laserCharge() {
+    const out = samples(0.47);
+    tone(out, { dur: 0.45, duty: 0.125, freq: (t) => sweep(250, 2000, 0.45)(t) * (1 + 0.03 * Math.sin(t * TAU * 30)), vol: (t) => 0.1 + 0.3 * (t / 0.45) });
+    return out;
+  },
+  laser() {
+    const out = samples(0.45);
+    noise(out, { dur: 0.08, short: true, rate: 15000, vol: 0.6 });
+    tone(out, { dur: 0.4, duty: 0.25, freq: sweep(1800, 70, 0.4), vol: decay(0.4, 0.8, 0.5) });
+    tone(out, { dur: 0.35, wave: 'triangle', freq: sweep(300, 40, 0.35), vol: decay(0.35, 1, 0.6) });
+    return out;
+  },
+  // Sniper: one sharp crack and a long faint echo.
+  sniper() {
+    const out = samples(0.4);
+    noise(out, { dur: 0.04, short: true, rate: 16000, vol: decay(0.04, 1, 0.7) });
+    tone(out, { dur: 0.08, duty: 0.5, freq: sweep(900, 180, 0.08), vol: decay(0.08, 1, 0.5) });
+    noise(out, { t0: 0.06, dur: 0.32, rate: sweep(3000, 400, 0.32), vol: decay(0.32, 1.5, 0.18) });
+    return out;
+  },
+  // Flamethrower: soft breathy noise puffs (it fires ~30 times a second).
+  flame() {
+    const out = samples(0.08);
+    noise(out, { dur: 0.08, rate: (t) => 2500 + Math.random() * 3000, vol: (t) => 0.3 * Math.sin((Math.PI * t) / 0.08) });
+    return out;
+  },
+  // Grenade toss: a hollow "thunk".
+  grenade() {
+    const out = samples(0.08);
+    tone(out, { dur: 0.07, wave: 'triangle', freq: sweep(240, 110, 0.07), vol: decay(0.07, 1, 0.6) });
+    noise(out, { dur: 0.01, rate: 9000, vol: 0.3 });
+    return out;
+  },
+  // Medkit: bright rising chime.
+  heal() {
+    const out = samples(0.34);
+    [72, 76, 79, 84].forEach((n, i) => tone(out, { t0: i * 0.06, dur: i === 3 ? 0.16 : 0.06, wave: 'triangle', freq: midi(n), vol: i === 3 ? decay(0.16, 1, 0.5) : 0.5 }));
+    return out;
+  },
+  // Ink rush: a liquid "bloop" sliding up.
+  inkRush() {
+    const out = samples(0.3);
+    tone(out, { dur: 0.28, duty: 0.25, freq: (t) => sweep(180, 900, 0.28)(t) * (1 + 0.15 * Math.sin(t * TAU * 22)), vol: decay(0.28, 0.6, 0.35) });
+    return out;
+  },
+  // Blackout: everything powers down.
+  blackout() {
+    const out = samples(0.6);
+    tone(out, { dur: 0.6, duty: 0.5, freq: sweep(900, 50, 0.6), vol: decay(0.6, 0.6, 0.4) });
+    noise(out, { t0: 0.45, dur: 0.06, short: true, rate: 4000, vol: 0.3 });
+    return out;
+  },
+  // Gravity well: a deep wobbling drone.
+  gravity() {
+    const out = samples(0.7);
+    tone(out, { dur: 0.7, wave: 'triangle', freq: (t) => 75 + 25 * Math.sin(t * TAU * 6), vol: (t) => 0.6 * Math.min(1, t / 0.1) * (1 - t / 0.7) });
+    noise(out, { dur: 0.7, rate: sweep(200, 1200, 0.7), vol: (t) => 0.15 * (1 - t / 0.7) });
+    return out;
+  },
+  // Paint bomb: three wet splats.
+  paintbomb() {
+    const out = samples(0.45);
+    for (const t0 of [0, 0.12, 0.27]) {
+      noise(out, { t0, dur: 0.1, rate: sweep(3500, 600, 0.1), vol: decay(0.1, 1.2, 0.5) });
+      tone(out, { t0, dur: 0.06, wave: 'triangle', freq: sweep(260, 90, 0.06), vol: decay(0.06, 1, 0.4) });
+    }
+    return out;
+  },
+  // Mirror world: a warbling glissando up and back down.
+  mirror() {
+    const out = samples(0.5);
+    tone(out, { dur: 0.5, duty: 0.25, freq: (t) => midi(64 + 24 * Math.sin((Math.PI * t) / 0.5)) * (1 + 0.04 * Math.sin(t * TAU * 25)), vol: decay(0.5, 0.5, 0.3) });
+    return out;
+  },
+  // Ink storm: a thunder crack and rolling rumble.
+  inkstorm() {
+    const out = samples(0.85);
+    noise(out, { dur: 0.08, short: true, rate: 12000, vol: 0.6 });
+    noise(out, { t0: 0.05, dur: 0.8, rate: sweep(1500, 70, 0.8), vol: (t) => 0.6 * (1 - t / 0.8) * (0.7 + 0.3 * Math.sin(t * TAU * 7)) });
+    return out;
+  },
   // Shotgun: a fat burst of noise with a low square thump under it.
   shotgun() {
     const out = samples(0.2);
