@@ -5,10 +5,20 @@ import { ARENA } from './game.js';
 const keys = new Set();
 const mouse = { x: 0, y: 0, down: false };
 
+// Which way of each axis was pressed most recently. When both opposite keys are held (left + right,
+// or up + down), the newest one wins, so you never get stuck standing still.
+const DIRECTION_OF = {
+  KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right',
+  KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down',
+};
+const lastPressed = { x: null, y: null };
+
 export function initInput(canvas) {
   window.addEventListener('keydown', (e) => {
     if (isTyping(e)) return;                    // typing a name isn't moving or drawing
     if (e.code === 'Space') e.preventDefault(); // stop the page from scrolling
+    const dir = DIRECTION_OF[e.code];
+    if (dir && !e.repeat) lastPressed[dir === 'left' || dir === 'right' ? 'x' : 'y'] = dir;
     keys.add(e.code);
   });
   window.addEventListener('keyup', (e) => keys.delete(e.code));
@@ -37,13 +47,25 @@ export function isTyping(e) {
   return e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
 }
 
+// If both directions of an axis are held, keep only the one pressed last.
+function resolve(a, b, aName, bName, last) {
+  if (a && b) return last === bName ? [false, true] : [true, false];
+  return [a, b];
+}
+
 // Snapshot of the local player's controls. This is exactly what a client will send to the host.
 export function readInput() {
+  const [left, right] = resolve(
+    keys.has('KeyA') || keys.has('ArrowLeft'), keys.has('KeyD') || keys.has('ArrowRight'), 'left', 'right', lastPressed.x,
+  );
+  const [up, down] = resolve(
+    keys.has('KeyW') || keys.has('ArrowUp'), keys.has('KeyS') || keys.has('ArrowDown'), 'up', 'down', lastPressed.y,
+  );
   return {
-    up: keys.has('KeyW') || keys.has('ArrowUp'),
-    down: keys.has('KeyS') || keys.has('ArrowDown'),
-    left: keys.has('KeyA') || keys.has('ArrowLeft'),
-    right: keys.has('KeyD') || keys.has('ArrowRight'),
+    up,
+    down,
+    left,
+    right,
     mx: mouse.x,
     my: mouse.y,
     click: mouse.down,
