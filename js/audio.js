@@ -14,7 +14,7 @@ const MAX_NEW_SOUNDS_PER_FRAME = 12;
 // Group name → max overlapping voices (oldest is cut when full) and min seconds between starts.
 const LIMITS = { shoot: 10, hit: 6, wall: 4, bounce: 4, shield: 4, pickup: 3, death: 3, explode: 4, meteorTick: 3 };
 const DEFAULT_LIMIT = 3;
-const MIN_GAP = { shoot: 0.012, wall: 0.025, bounce: 0.03, shield: 0.03, flame: 0.05 };
+const MIN_GAP = { shoot: 0.012, wall: 0.025, bounce: 0.03, shield: 0.03, flame: 0.05, dry: 0.04 };
 const GROUP = { shootRicochet: 'shoot', shotgun: 'shoot', uzi: 'shoot', rocket: 'shoot', sniper: 'shoot', grenade: 'shoot', laser: 'shoot', shieldBreak: 'shield', meteorBoom: 'explode' };
 const groupOf = (name) => GROUP[name] || name.split('_')[0];
 
@@ -168,6 +168,7 @@ function onEvent(e) {
     case 'bounce': play('bounce', e.x, { rate: jitter(0.06), gain: 0.5 }); break;
     case 'shield': play(e.broke ? 'shieldBreak' : 'shield', e.x, { rate: jitter(0.05), gain: 0.7 }); break;
     case 'reload': play('reload', e.x, { gain: 0.5 }); break;
+    case 'dry': play('dry', e.x, { gain: 0.6 }); break;
     case 'reloaded': play('reloaded', e.x, { gain: 0.5 }); break;
     case 'countdown': play('count', null, { gain: 0.6 }); break;
     case 'go': play('go', null, { gain: 0.6 }); break;

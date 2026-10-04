@@ -384,6 +384,15 @@ export const SFX = {
     }
     return out;
   },
+  // Dry fire: the hammer falling on an empty chamber — two tiny metallic ticks.
+  dry() {
+    const out = samples(0.05);
+    noise(out, { dur: 0.007, short: true, rate: 15000, vol: decay(0.007, 1, 0.6) });
+    tone(out, { dur: 0.012, duty: 0.125, freq: sweep(2600, 1700, 0.012), vol: decay(0.012, 1, 0.35) });
+    noise(out, { t0: 0.028, dur: 0.006, short: true, rate: 11000, vol: decay(0.006, 1, 0.35) });
+    tone(out, { t0: 0.028, dur: 0.01, duty: 0.125, freq: 1300, vol: decay(0.01, 1, 0.2) });
+    return out;
+  },
   // Menu button.
   ui() {
     const out = samples(0.035);

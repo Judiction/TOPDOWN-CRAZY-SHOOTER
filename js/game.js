@@ -173,6 +173,7 @@ export function respawnPlayer(game, id, x, y) {
     ghost: 0,                         // seconds of GHOST left
     speed: 0,                         // seconds of SPEED BOOTS left
     charging: 0,                      // laser charge-up seconds left
+    trigger: false,                   // was the shoot button already held last tick (for dry-fire clicks)
     burnUntil: 0,                     // game time before which flames can't burn this player again
     shields: null,                    // DEFENSE BALLS: hits left per sphere (0 = broken)
     orbit: 0,                         // current rotation of the shields
@@ -295,7 +296,12 @@ export function step(game, inputs, dt) {
       // Small epsilon: repeated float subtraction leaves crumbs like 1e-17 that would cost an extra tick.
       const ready = input.click && p.cooldown < 1e-6 && p.charging === 0;
       if (ready && (p.weapon !== 'pistol' || (p.reloading === 0 && p.ammo > 0))) shoot(game, p);
+      // Pulling the trigger with an empty, reloading pistol: dry-fire click (once per pull).
+      else if (input.click && !p.trigger && p.weapon === 'pistol' && (p.reloading > 0 || p.ammo === 0)) {
+        emit(game, 'dry', { x: p.x, y: p.y });
+      }
     }
+    p.trigger = !!input.click;
 
     // Laser charge-up: the beam fires where you're aiming when the charge completes.
     if (p.charging > 0) {
@@ -519,6 +525,7 @@ function shoot(game, p) {
     p.ammo -= 1;
     if (p.ammo === 0) {
       p.reloading = RELOAD_TIME;
+      emit(game, 'dry', { x: p.x, y: p.y });          // click: that was the last round
       emit(game, 'reload', { x: p.x, y: p.y });
     }
     fire(game, p, p.aim, BULLET_SPEED, { ricochet });
@@ -548,6 +555,7 @@ function shoot(game, p) {
   if (p.weaponAmmo <= 0 && kind !== 'laser') {
     p.weapon = 'pistol';
     p.weaponAmmo = 0;
+    emit(game, 'dry', { x: p.x, y: p.y });            // click: the powerup weapon is empty
   }
 }
 

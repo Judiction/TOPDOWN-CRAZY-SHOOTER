@@ -116,6 +116,16 @@ const CROSSHAIR = [
   '......XXX......',
 ];
 
+let crosshairCss = 'crosshair';
+let crosshairHidden = false;
+
+// While drawing, only the brush circle is shown: the crosshair hides.
+export function setCrosshairHidden(canvas, hidden) {
+  if (hidden === crosshairHidden) return;
+  crosshairHidden = hidden;
+  canvas.style.cursor = hidden ? 'none' : crosshairCss;
+}
+
 function crosshairCursor(cssPerPixel) {
   // Browsers cap cursor images at 128 px, so keep it within that.
   const size = CROSSHAIR.length;
@@ -143,7 +153,8 @@ export function initCanvas(canvas) {
     canvas.style.height = `${(VIEW_H * scale) / dpr}px`;
     // Menus size themselves in game pixels via this CSS variable.
     canvas.parentElement.style.setProperty('--px', `${scale / dpr}px`);
-    canvas.style.cursor = crosshairCursor(scale / dpr);
+    crosshairCss = crosshairCursor(scale / dpr);
+    canvas.style.cursor = crosshairHidden ? 'none' : crosshairCss;
   };
   window.addEventListener('resize', fit);
   fit();
@@ -583,13 +594,17 @@ function drawCursorPattern(ctx, t, opacity = 0.5) {
   if (!spinSheet.complete || !spinSheet.naturalWidth) return;
   const S = SPIN_SPACING, size = SPIN_SIZE * PX;
   // The whole grid drifts diagonally; each cursor is a few frames behind its neighbor, so the
-  // spinning ripples across the screen in waves.
-  const ox = snap((t * 18) % S), oy = snap((t * 10) % S);
+  // spinning ripples across the screen in waves. Every cursor has a fixed place in an endless grid
+  // (col, row are absolute, not per-screen), so nothing jumps when the drift scrolls past a cell.
+  const shiftX = t * 18, shiftY = t * 10;
+  const row0 = Math.floor(-shiftY / S) - 1, row1 = Math.ceil((ARENA.h - shiftY) / S) + 1;
   ctx.globalAlpha = opacity;
-  for (let row = -1; row * S < ARENA.h + S; row++) {
-    for (let col = -1; col * S < ARENA.w + S; col++) {
-      const x = col * S + ox + (row % 2 ? S / 2 : 0), y = row * S + oy;
-      const f = (Math.floor(t * SPIN_FPS) + col * 3 + row * 7 + 600) % SPIN_FRAMES;
+  for (let row = row0; row <= row1; row++) {
+    const stagger = row & 1 ? S / 2 : 0;
+    const col0 = Math.floor((-shiftX - stagger) / S) - 1, col1 = Math.ceil((ARENA.w - shiftX - stagger) / S) + 1;
+    for (let col = col0; col <= col1; col++) {
+      const x = snap(col * S + shiftX + stagger), y = snap(row * S + shiftY);
+      const f = (((Math.floor(t * SPIN_FPS) + col * 3 + row * 7) % SPIN_FRAMES) + SPIN_FRAMES) % SPIN_FRAMES;
       ctx.drawImage(spinSheet, (f % SPIN_COLS) * SPIN_SIZE, Math.floor(f / SPIN_COLS) * SPIN_SIZE, SPIN_SIZE, SPIN_SIZE, x - size / 2, y - size / 2, size, size);
     }
   }

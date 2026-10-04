@@ -14,7 +14,7 @@ import { createBrain, botInput } from './bots.js';
 import { createRoom, applyAction, canStart, addMember, removeMember } from './room.js';
 import { cleanName, MAX_PLAYERS, COLORS } from './settings.js';
 import { initInput, readInput, isTyping } from './input.js';
-import { initCanvas, render, renderBackdrop, renderMatchHud } from './render.js';
+import { initCanvas, render, renderBackdrop, renderMatchHud, setCrosshairHidden } from './render.js';
 import { FONT, clearSpriteCache } from './pixel.js';
 import { initAudio, updateAudio, playUi } from './audio.js';
 import { createUI } from './ui.js';
@@ -633,6 +633,8 @@ function frame(now) {
       if (me?.alive) me.aim = Math.atan2(input.my - me.y, input.mx - me.x);   // aim feels instant
     }
     const inLobby = app.screen === 'lobby';
+    // Holding Space shows the brush circle; no need for the crosshair on top of it.
+    setCrosshairHidden(canvas, !!input.draw && !app.menuOpen && !!game.players[id]?.alive);
     render(ctx, game, id, input, { hud: !inLobby, pattern: inLobby ? LOBBY_PATTERN : 0 });
     if (app.screen === 'match') renderMatchHud(ctx, match, id);
     updateAudio(game);
@@ -646,6 +648,7 @@ function frame(now) {
       }
     }
   } else {
+    setCrosshairHidden(canvas, false);
     renderBackdrop(ctx, menuScene.bgSeed);
     updateAudio(menuScene);
   }
