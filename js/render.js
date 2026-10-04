@@ -44,14 +44,17 @@ export const POWERUP_STYLE = {
 const SHIELD_FRESH = '#86efac';
 const SHIELD_CRACKED = '#16a34a';
 // Per bullet kind: pixel radius + colors. Ricochet rounds of any gun are red.
+// Visual size only — collision always uses BULLET_RADIUS in game.js.
 const BULLET_STYLE = {
-  pistol:   { r: 2, fill: '#ffe066', outline: '#7a5c00' },
-  pellet:   { r: 2, fill: '#ffb347', outline: '#7c2d12' },
-  uzi:      { r: 2, fill: '#e9d5ff', outline: '#3b0764' },
-  sniper:   { r: 2, fill: '#ecfeff', outline: '#0e7490' },
-  grenade:  { r: 3, fill: '#84cc16', outline: '#1a2e05' },
-  ricochet: { r: 2, fill: '#ff6b6b', outline: '#7f1d1d' },
+  pistol:   { r: 3, fill: '#fff27a', outline: '#5c3a00' },
+  pellet:   { r: 3, fill: '#ffc46b', outline: '#5c1a00' },
+  uzi:      { r: 3, fill: '#f3e8ff', outline: '#3b0764' },
+  sniper:   { r: 3, fill: '#f0fdff', outline: '#0e7490' },
+  grenade:  { r: 4, fill: '#a3e635', outline: '#1a2e05' },
+  ricochet: { r: 3, fill: '#ff8a8a', outline: '#7f1d1d' },
 };
+// Faint trail behind each bullet: dots back along its direction of travel (no history needed).
+const TRAIL = [[7, 2, 0.5], [14, 2, 0.32], [21, 1, 0.18]];   // [distance behind, pixel radius, opacity]
 const BAR_BG = '#000000aa';
 
 // Walls are drawn onto a tiny offscreen canvas (one pixel per cell), then scaled up.
@@ -215,23 +218,43 @@ export function render(ctx, game, localId, input, { hud = true, pattern = 0 } = 
   drawSmoke(ctx, now);
   // Shots start at the player's center (so they can't skip through walls); they stay hidden until
   // they've left the fingertip or the gun barrel, so they look like they come out of the weapon.
+  // Drawn in batches (all trails, then all bodies, then all hot centers) so the per-bullet cost is
+  // a few plain pixel rectangles — cheap even with hundreds of bullets flying.
+  const shots = [];
   game.bullets.forEach((b, i) => {
     if ((b.travel ?? Infinity) < MUZZLE[b.kind] && !b.bounced) return;
-    if (b.kind === 'rocket') drawRocket(ctx, b);
-    else if (b.kind === 'flame') {
+    if (b.kind === 'rocket') return drawRocket(ctx, b);
+    if (b.kind === 'flame') {
       // Flickering fire pixels.
       const fire = FLAME_COLORS[(i + Math.floor(now / 50)) % FLAME_COLORS.length];
-      drawSprite(ctx, disc(2 + (i % 2), fire, null), b.x, b.y);
-    } else {
-      const base = BULLET_STYLE[b.kind] || BULLET_STYLE.pistol;
-      const look = b.ricochet ? BULLET_STYLE.ricochet : base;
-      // Pistol, shotgun and uzi rounds start pale yellow and burn down to red the farther they fly.
-      const fades = !b.ricochet && FADING.has(b.kind);
-      const fill = fades ? BULLET_FADE[Math.min(BULLET_FADE.length - 1, Math.floor((b.travel || 0) / 75))] : look.fill;
-      drawSprite(ctx, disc(base.r, fill, fades ? '#5c1a00' : look.outline), b.x, b.y);
-      if (b.kind === 'grenade' && Math.floor(now / 120) % 2) drawSprite(ctx, disc(1, '#ffffff', null), b.x, b.y);
+      return drawSprite(ctx, disc(2 + (i % 2), fire, null), b.x, b.y);
+    }
+    const base = BULLET_STYLE[b.kind] || BULLET_STYLE.pistol;
+    const look = b.ricochet ? BULLET_STYLE.ricochet : base;
+    // Pistol, shotgun and uzi rounds start pale yellow and burn down to red the farther they fly.
+    const fades = !b.ricochet && FADING.has(b.kind);
+    const fill = fades ? BULLET_FADE[Math.min(BULLET_FADE.length - 1, Math.floor((b.travel || 0) / 75))] : look.fill;
+    shots.push({ b, base, fill, outline: fades ? '#5c1a00' : look.outline });
+  });
+  // Faint trail: squares back along each bullet's direction of travel, never back inside the gun.
+  TRAIL.forEach(([back, r, alpha]) => {
+    ctx.globalAlpha = alpha;
+    const size = (r * 2 - 1) * PX, off = (r - 1) * PX;
+    for (const { b, fill } of shots) {
+      if (b.kind === 'grenade' || (!b.bounced && (b.travel ?? Infinity) - back < MUZZLE[b.kind])) continue;
+      const sp = Math.hypot(b.vx, b.vy) || 1;
+      ctx.fillStyle = fill;
+      ctx.fillRect(snap(b.x - (b.vx / sp) * back) - off, snap(b.y - (b.vy / sp) * back) - off, size, size);
     }
   });
+  ctx.globalAlpha = 1;
+  for (const { b, base, fill, outline } of shots) drawSprite(ctx, disc(base.r, fill, outline), b.x, b.y);
+  // White-hot center pixel makes every round pop against busy backgrounds (grenades blink).
+  ctx.fillStyle = '#ffffff';
+  for (const { b } of shots) {
+    if (b.kind === 'grenade' && Math.floor(now / 120) % 2) continue;
+    ctx.fillRect(snap(b.x), snap(b.y), PX, PX);
+  }
   drawTopFx(ctx, now);
 
   const me = game.players[localId];
@@ -251,7 +274,7 @@ export function render(ctx, game, localId, input, { hud = true, pattern = 0 } = 
 const FLAME_COLORS = ['#fde047', '#fb923c', '#ef4444', '#fff7ae'];
 const MUZZLE = Object.fromEntries(Object.entries(BULLET_SPRITE).map(([kind, sprite]) => [kind, muzzleDistance(sprite, PLAYER_RADIUS)]));
 const FADING = new Set(['pistol', 'pellet', 'uzi']);
-const BULLET_FADE = ['#fffbd1', '#fff27a', '#ffd84d', '#ffb52e', '#ff8c1a', '#ff6417', '#ff3f1f', '#e0232a'];
+const BULLET_FADE = ['#ffffe0', '#fff59a', '#ffe066', '#ffc94d', '#ffa53d', '#ff8130', '#ff5a33', '#ff3b3b'];
 
 // SPEED BOOTS afterimages: recent positions of fast players.
 const trails = new Map();               // player id -> [{ x, y, aim, t }]
@@ -366,8 +389,8 @@ export function powerupBadge(type) {
 function drawRocket(ctx, b) {
   const s = Math.hypot(b.vx, b.vy) || 1;
   const ux = b.vx / s, uy = b.vy / s;
-  drawSprite(ctx, disc(2, '#fb923c', '#7c2d12'), b.x - ux * 5, b.y - uy * 5);
-  drawSprite(ctx, disc(2, '#ffffff', '#3f3f46'), b.x + ux * 3, b.y + uy * 3);
+  drawSprite(ctx, disc(3, '#fb923c', '#7c2d12'), b.x - ux * 6, b.y - uy * 6);
+  drawSprite(ctx, disc(2, '#ffffff', '#3f3f46'), b.x + ux * 4, b.y + uy * 4);
 }
 
 // ---- player sprite: the pointing hand (see sprites.js) ----
