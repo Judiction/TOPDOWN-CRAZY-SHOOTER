@@ -7,7 +7,7 @@ import {
 } from './game.js';
 import {
   updateFx, shakeOffset, drawBackgroundFx, drawWallFx, drawMeteors, drawSmoke, drawTopFx,
-  drawGravity, drawPlayerFx, drawBlackout, drawBanners, drawFloats, drawShells,
+  drawGravity, gravityFlash, drawPlayerFx, drawBlackout, drawBanners, drawFloats, drawShells,
 } from './fx.js';
 import { powerupIcon } from './icons.js';
 import { createBackground, BG_W, BG_H } from './background.js';
@@ -198,7 +198,7 @@ export function render(ctx, game, localId, input, { hud = true, pattern = 0 } = 
   }
 
   updateFx(game, now, wallPixels, localId);   // before drawWalls: the eraser effect needs the old walls
-  drawBackground(ctx, game.bgSeed);
+  drawBackground(ctx, game.bgSeed, game.gravity);
   if (pattern) drawCursorPattern(ctx, now / 1000, pattern);
   drawHitFlash(ctx, game);
   drawBackgroundFx(ctx, now);
@@ -286,7 +286,7 @@ const BULLET_FADE = ['#ffffe0', '#fff59a', '#ffe066', '#ffc94d', '#ffa53d', '#ff
 // SPEED BOOTS afterimages: recent positions of fast players.
 const trails = new Map();               // player id -> [{ x, y, aim, t }]
 
-function drawBackground(ctx, seed) {
+function drawBackground(ctx, seed, gravity = null) {
   const now = performance.now();
   if (seed !== bgSeed) {
     bgSeed = seed;
@@ -295,11 +295,52 @@ function drawBackground(ctx, seed) {
     bgLastDraw = -Infinity;
   }
   if (now - bgLastDraw >= BG_FRAME_MS) {
-    bgArt.draw(bgPixels, (now - bgStart) / 1000);
+    if (gravity) {
+      bgArt.draw(bgWarpSrc, (now - bgStart) / 1000);
+      warpBackground(gravity, now);
+    } else {
+      bgArt.draw(bgPixels, (now - bgStart) / 1000);
+    }
     bgCtx.putImageData(bgImage, 0, 0);
     bgLastDraw = now;
   }
   ctx.drawImage(bgCanvas, 0, 0, ARENA.w, ARENA.h);
+}
+
+// GRAVITY WELL: the background art gets sucked into the hole. Each background pixel samples the art
+// from farther out and twisted around the center (a pinch + a swirl that winds tighter the longer
+// the well lasts), darkening toward the core and flushing red in time with the core's flashes.
+// A 160x90 remap at 30fps, so it costs next to nothing.
+const bgWarpSrc = new Uint32Array(BG_W * BG_H);
+const WARP_REACH = 75;                  // in background pixels (the art is 160x90)
+function warpBackground(g, now) {
+  const s = Math.max(0, Math.min(1, g.t / 0.6, (g.dur - g.t) / 0.6));     // eases in and out
+  const cx = (g.x / ARENA.w) * BG_W, cy = (g.y / ARENA.h) * BG_H;
+  const red = gravityFlash(now) ? s : 0;
+  const twist = 1.2 + g.t * 1.1;
+  for (let y = 0; y < BG_H; y++) {
+    for (let x = 0; x < BG_W; x++) {
+      const dx = x + 0.5 - cx, dy = y + 0.5 - cy;
+      const r = Math.hypot(dx, dy);
+      const i = y * BG_W + x;
+      if (r >= WARP_REACH) {
+        bgPixels[i] = bgWarpSrc[i];
+        continue;
+      }
+      const f = (1 - r / WARP_REACH) ** 2;
+      const rs = r + s * f * WARP_REACH * 0.55;
+      const a = Math.atan2(dy, dx) + s * f * twist;
+      const sx = Math.min(BG_W - 1, Math.max(0, (cx + Math.cos(a) * rs) | 0));
+      const sy = Math.min(BG_H - 1, Math.max(0, (cy + Math.sin(a) * rs) | 0));
+      const c = bgWarpSrc[sy * BG_W + sx];
+      const dark = 1 - s * 0.9 * Math.max(0, 1 - r / 32) ** 1.5;
+      const cool = dark * (1 - red * f * 0.5);
+      const cr = Math.min(255, (c & 255) * dark + red * f * 110) | 0;
+      const cg = (((c >> 8) & 255) * cool) | 0;
+      const cb = (((c >> 16) & 255) * cool) | 0;
+      bgPixels[i] = ((c & 0xff000000) | (cb << 16) | (cg << 8) | cr) >>> 0;
+    }
+  }
 }
 
 function drawHitFlash(ctx, game) {

@@ -341,55 +341,45 @@ export function drawWallFx(ctx, now) {
   ctx.drawImage(eraseCanvas, 0, 0, ARENA.w, ARENA.h);
 }
 
-// GRAVITY WELL: the arena darkens around a black core; shockwave rings collapse into it, six spiral
-// arms swirl around it and streams of debris get sucked in.
+// GRAVITY WELL: a hole in the middle that flashes black and red. The background art itself gets
+// sucked in (warpBackground in render.js); here: the hole, rings falling into it and specks of
+// debris streaming in.
+const GRAVITY_FLASH_HZ = 6;
+export function gravityFlash(now) {
+  return Math.floor((now / 1000) * GRAVITY_FLASH_HZ) % 2 === 1;   // true = the red beat
+}
+
 export function drawGravity(ctx, game, now) {
   const g = game.gravity;
   if (!g) return;
-  const fade = Math.min(1, g.t / 0.4, (g.dur - g.t) / 0.4);
+  const fade = Math.max(0, Math.min(1, g.t / 0.4, (g.dur - g.t) / 0.4));
   const t = now / 1000;
-  const pulse = 0.5 + 0.5 * Math.sin(t * 9);
+  const red = gravityFlash(now);
+  const size = Math.max(0.15, Math.min(1, g.t / 0.5, (g.dur - g.t) / 0.5));   // the hole opens and closes
 
-  // Darkness pooling around the center.
-  ctx.globalAlpha = 0.5 * fade;
-  drawSprite(ctx, disc(150, '#05010a', null), g.x, g.y);
-  ctx.globalAlpha = 0.35 * fade;
-  drawSprite(ctx, disc(210, '#05010a', null), g.x, g.y);
-
-  // Shockwave rings collapsing inward.
-  for (let i = 0; i < 4; i++) {
-    const k = (t * 0.7 + i / 4) % 1;
-    const r = Math.max(8, Math.round((200 * (1 - k) ** 1.5) / 4) * 4);
-    ctx.globalAlpha = fade * k * 0.9;
-    drawSprite(ctx, ring(r, i % 2 ? '#c4b5fd' : '#f0abfc'), g.x, g.y);
+  // Rings collapsing into it, red and black.
+  for (let i = 0; i < 3; i++) {
+    const k = (t * 0.9 + i / 3) % 1;
+    const r = Math.round(45 * (1 - k) ** 1.6 + 13);
+    ctx.globalAlpha = fade * k;
+    drawSprite(ctx, ring(r, i % 2 ? '#000000' : '#ef4444'), g.x, g.y);
   }
 
-  // Six spiral arms.
-  const spin = t * 3.3;
-  for (let arm = 0; arm < 6; arm++) {
-    for (let i = 0; i < 40; i++) {
-      const r = 28 + i * 10;
-      const a = spin + arm * (Math.PI / 3) + i * 0.27 - Math.log(r) * 0.8;
-      ctx.globalAlpha = fade * (1 - i / 48);
-      const color = i % 4 === 0 ? '#ffffff' : arm % 2 ? '#c4b5fd' : '#f0abfc';
-      drawSprite(ctx, disc(i < 10 ? 3 : i < 25 ? 2 : 1, color, null), g.x + Math.cos(a) * r, g.y + Math.sin(a) * r);
-    }
-  }
-
-  // Debris streaming in from all around, speeding up as it falls.
-  for (let i = 0; i < 70; i++) {
+  // Debris streaming in, speeding up as it falls.
+  for (let i = 0; i < 40; i++) {
     const k = (t * 0.55 + i * 0.137) % 1;
-    const r = 30 + 560 * (1 - k) ** 2;
-    const a = i * 2.39996 + k * 7;
+    const r = 26 + 520 * (1 - k) ** 2;
+    const a = i * 2.39996 + k * 6;
     ctx.globalAlpha = fade * Math.min(1, k * 3);
-    drawSprite(ctx, disc(1, i % 3 ? '#e9d5ff' : '#ffffff', null), g.x + Math.cos(a) * r, g.y + Math.sin(a) * r * 0.9);
+    drawSprite(ctx, disc(1, i % 3 ? '#fca5a5' : '#000000', null), g.x + Math.cos(a) * r, g.y + Math.sin(a) * r);
   }
 
-  // The core: black hole with a hot, pulsing rim.
+  // The hole: hard flashes between black with a red rim and a red ring with a black rim.
   ctx.globalAlpha = fade;
-  drawSprite(ctx, disc(Math.round(20 + 3 * pulse), '#000000', '#a855f7', 3), g.x, g.y);
-  drawSprite(ctx, ring(Math.round(26 + 4 * pulse), '#f0abfc'), g.x, g.y);
-  drawSprite(ctx, ring(Math.round(30 + 6 * pulse), '#7c3aed'), g.x, g.y);
+  const core = Math.max(3, Math.round((11 + (red ? 1 : 0)) * size));
+  drawSprite(ctx, disc(core + 2, red ? '#000000' : '#ef4444', null), g.x, g.y);
+  drawSprite(ctx, disc(core, red ? '#ef4444' : '#000000', null), g.x, g.y);
+  drawSprite(ctx, disc(Math.max(1, core - 4), '#000000', null), g.x, g.y);
   ctx.globalAlpha = 1;
 }
 
