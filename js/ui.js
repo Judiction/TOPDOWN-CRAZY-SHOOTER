@@ -3,6 +3,7 @@
 
 import { COLORS, SETTING_DEFS, MAX_PLAYERS, NAME_MAX } from './settings.js';
 import { canStart } from './room.js';
+import { mountLogo } from './logo.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -35,17 +36,21 @@ export function createUI(root, handlers) {
 
   function showTitle({ name = '', code = '', message = '' } = {}) {
     const n = el(`
-      <div class="panel title">
-        <h1 class="logo"><span style="color:#ff5ea8">CLICK</span> <span style="color:#5ee7ff">CLACK</span><br><span style="color:#ffe14d">BOOM</span> <span style="color:#ff7a45">POW</span></h1>
-        <label class="field">YOUR NAME <input id="ui-name" maxlength="${NAME_MAX}" spellcheck="false" autocomplete="off"></label>
-        <button data-act="host" class="big">HOST GAME</button>
-        <div class="row">
-          <input id="ui-code" maxlength="8" placeholder="ROOM CODE" spellcheck="false" autocomplete="off">
-          <button data-act="join">JOIN</button>
+      <div class="title-screen">
+        <canvas class="logo-canvas" aria-label="Doodle Duel"></canvas>
+        <p class="tagline">DRAW WALLS <i>·</i> SHOOT CURSORS <i>·</i> LAST ONE CLICKING WINS</p>
+        <div class="panel title">
+          <label class="field">YOUR NAME <input id="ui-name" maxlength="${NAME_MAX}" spellcheck="false" autocomplete="off"></label>
+          <button data-act="host" class="big">HOST GAME</button>
+          <div class="row">
+            <input id="ui-code" maxlength="8" placeholder="ROOM CODE" spellcheck="false" autocomplete="off">
+            <button data-act="join">JOIN</button>
+          </div>
+          <p class="msg" id="ui-msg"></p>
         </div>
-        <p class="msg" id="ui-msg"></p>
-        <p class="help">WASD MOVE · MOUSE AIM · CLICK SHOOT · R RELOAD<br>HOLD SPACE + CLICK TO DRAW WALLS · M MUTE · ESC MENU</p>
+        <p class="help">WASD MOVE · MOUSE AIM · CLICK SHOOT · R RELOAD · SPACE + CLICK DRAW · M MUTE · ESC MENU</p>
       </div>`);
+    mountLogo(n.querySelector('.logo-canvas'));
     const nameInput = n.querySelector('#ui-name');
     const codeInput = n.querySelector('#ui-code');
     nameInput.value = name;

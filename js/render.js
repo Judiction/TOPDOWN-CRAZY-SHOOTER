@@ -501,11 +501,36 @@ function drawHud(ctx, me) {
 
 }
 
-// Menus: just the generative art.
+// Menus: the generative art with a drifting pattern of spinning cursors over it.
 export function renderBackdrop(ctx, seed) {
   ctx.setTransform(1 / PX, 0, 0, 1 / PX, 0, 0);
   ctx.imageSmoothingEnabled = false;
   drawBackground(ctx, seed);
+  drawCursorPattern(ctx, performance.now() / 1000);
+}
+
+// 60-frame sprite sheet (10 x 6 frames of 32 px) of a cursor spinning on its axis.
+const spinSheet = new Image();
+spinSheet.src = 'assets/cursor-spin.png';
+const SPIN_FRAMES = 60, SPIN_COLS = 10, SPIN_SIZE = 32;
+const SPIN_SPACING = 100;             // arena units between cursors
+const SPIN_FPS = 24;
+
+function drawCursorPattern(ctx, t) {
+  if (!spinSheet.complete || !spinSheet.naturalWidth) return;
+  const S = SPIN_SPACING, size = SPIN_SIZE * PX;
+  // The whole grid drifts diagonally; each cursor is a few frames behind its neighbor, so the
+  // spinning ripples across the screen in waves.
+  const ox = snap((t * 18) % S), oy = snap((t * 10) % S);
+  ctx.globalAlpha = 0.5;
+  for (let row = -1; row * S < ARENA.h + S; row++) {
+    for (let col = -1; col * S < ARENA.w + S; col++) {
+      const x = col * S + ox + (row % 2 ? S / 2 : 0), y = row * S + oy;
+      const f = (Math.floor(t * SPIN_FPS) + col * 3 + row * 7 + 600) % SPIN_FRAMES;
+      ctx.drawImage(spinSheet, (f % SPIN_COLS) * SPIN_SIZE, Math.floor(f / SPIN_COLS) * SPIN_SIZE, SPIN_SIZE, SPIN_SIZE, x - size / 2, y - size / 2, size, size);
+    }
+  }
+  ctx.globalAlpha = 1;
 }
 
 // ---- match overlay: scoreboard, round, timer, countdown, banners ----

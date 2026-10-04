@@ -1,4 +1,4 @@
-# CLICK CLACK BOOM POW
+# DOODLE DUEL
 
 A tiny retro top-down shooter for up to 8 players, right in the browser. You're a mouse cursor. Shoot your friends, paint walls to hide behind, and be the last cursor standing.
 

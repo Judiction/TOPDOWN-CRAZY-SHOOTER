@@ -48,6 +48,13 @@ body:not(.in-match) #hint {
   pointer-events: none;
 }
 
+/* Title logo font (TypeAliens' Pixelout). */
+@font-face {
+  font-family: Pixelout;
+  src: url(Pixelout.ttf) format('truetype');
+  font-display: block;
+}
+
 /* ---- menus ---- */
 /* --px = one game pixel in CSS px (set from JS), so menus scale with the canvas and stay pixel-sharp. */
 
@@ -315,4 +322,84 @@ body:not(.in-match) #hint {
   margin-left: auto;
   color: #fde047;
   font-weight: normal;
+}
+
+/* ---- title screen ---- */
+
+.title-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--px) * 4);
+  pointer-events: none;
+  /* Soft vignette that pulls the eye to the middle. */
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 35%, rgba(0, 0, 0, 0.55) 100%);
+}
+
+.title-screen .panel {
+  pointer-events: auto;
+  padding: calc(var(--px) * 8) calc(var(--px) * 16);
+  animation: rise 0.6s 0.35s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+
+.logo-canvas {
+  width: calc(var(--px) * 460);
+  height: calc(var(--px) * 170);
+  margin-bottom: calc(var(--px) * -10);
+  image-rendering: pixelated;
+  animation: logo-drop 0.9s cubic-bezier(0.2, 1.5, 0.4, 1) both;
+}
+
+.tagline {
+  margin: 0 0 calc(var(--px) * 4);
+  color: #fff;
+  text-shadow: var(--px) var(--px) 0 #000, calc(var(--px) * 2) calc(var(--px) * 2) 0 #000;
+  animation: rise 0.6s 0.2s ease-out both;
+}
+
+.tagline i {
+  font-style: normal;
+  color: #ff5ea8;
+}
+
+.title-screen .help {
+  margin: calc(var(--px) * 4) 0 0 !important;
+  color: #e5e7eb;
+  text-shadow: var(--px) var(--px) 0 #000;
+  animation: rise 0.6s 0.5s ease-out both;
+}
+
+@keyframes logo-drop {
+  from { transform: translateY(calc(var(--px) * -140)) scale(0.7); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+@keyframes rise {
+  from { transform: translateY(calc(var(--px) * 12)); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+/* Buttons pop a little when hovered and press in when clicked. */
+.panel button {
+  transition: transform 0.08s ease-out, background 0.08s;
+}
+
+.panel button:hover:not(:disabled) {
+  transform: translateY(calc(var(--px) * -1));
+}
+
+.panel button:active:not(:disabled) {
+  transform: translateY(var(--px));
+}
+
+.panel button.big {
+  animation: glow 1.6s ease-in-out infinite;
+}
+
+@keyframes glow {
+  0%, 100% { box-shadow: inset 0 calc(var(--px) * -2) 0 #0b0f19, 0 0 0 var(--px) #000; }
+  50% { box-shadow: inset 0 calc(var(--px) * -2) 0 #0b0f19, 0 0 0 var(--px) #000, 0 0 calc(var(--px) * 6) #ff5ea8; }
 }
