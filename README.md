@@ -11,7 +11,7 @@ No install and no account. One player hosts, everyone else joins with a 4-letter
 1. Type your name and click **HOST GAME**.
 2. Share the **room code**, or click **COPY INVITE LINK** and send the link to your friends.
 3. Friends type the code and click **JOIN**, or just open your link.
-4. Everyone picks a color. Each color can only be taken by one player.
+4. Everyone picks a color. Players with the same color play as a team.
 5. The host picks the settings and clicks **START**.
 
 Want to play solo or fill empty seats? The host can **+ ADD BOT** in the lobby.
@@ -34,6 +34,15 @@ Want to play solo or fill empty seats? The host can **+ ADD BOT** in the lobby.
 - **Health:** you die after 10 hits. The host can change this. Eliminating a player heals you 5 HP. Players explode when they die: everyone caught in the blast takes 2 damage and nearby walls are destroyed, so watch out for chain reactions.
 - **Ammo:** 60 bullets per magazine. A reload takes 2.4 seconds.
 - **Sudden death:** if the round timer runs out, everyone slowly loses health until one player is left.
+
+### Teams
+
+Pick the **same color** as someone to be on their team. The host can also recolor bots by clicking their color box in the lobby.
+
+- Teammates can't hurt each other: your shots stop on a teammate harmlessly, and explosions, lasers and death blasts spare them. Meteors and sudden death still hit everyone.
+- A round ends when only one team has players left standing. That team scores one round.
+- The first team to reach the target number of round wins takes the game.
+- You need at least two different colors to start.
 
 ### Wall Paint
 

@@ -621,3 +621,97 @@ body:not(.in-match) #hint {
   text-shadow: var(--px) var(--px) 0 #000, calc(var(--px) * 2) calc(var(--px) * 2) 0 #000;
   animation: hint-bob 2.4s ease-in-out infinite;
 }
+
+/* ---- teams ---- */
+
+.team-warn {
+  display: block;
+  margin-top: calc(var(--px) * 2);
+  color: #f87171;
+  animation: warn-blink 1.2s steps(2) infinite;
+}
+
+.team-warn[hidden] {
+  display: none;
+}
+
+@keyframes warn-blink {
+  50% { color: #fca5a5; }
+}
+
+/* A color someone else already has: a small dot in the corner. */
+.panel .swatch.used::after {
+  content: '';
+  position: absolute;
+  right: var(--px);
+  bottom: var(--px);
+  width: calc(var(--px) * 3);
+  height: calc(var(--px) * 3);
+  background: #000;
+  box-shadow: 0 0 0 calc(var(--px) * 0.5) #fff;
+}
+
+.panel .swatch {
+  position: relative;
+}
+
+/* Bots' color boxes are buttons for the host. */
+.panel .dot.pick {
+  margin: 0;
+  padding: 0;
+  width: calc(var(--px) * 8);
+  height: calc(var(--px) * 8);
+  background: var(--c);
+  box-shadow: 0 0 0 var(--px) #fff;
+  cursor: pointer;
+}
+
+.panel .dot.pick:hover, .panel .dot.pick.open {
+  background: var(--c);
+  box-shadow: 0 0 0 var(--px) #000, 0 0 0 calc(var(--px) * 2) #fde047;
+}
+
+.botpick {
+  margin: calc(var(--px) * 3) 0;
+  padding: calc(var(--px) * 3);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 0 0 var(--px) #fde047;
+}
+
+.botpick[hidden] {
+  display: none;
+}
+
+.botpick h3 {
+  margin-top: 0 !important;
+}
+
+.botpick b {
+  font-weight: normal;
+  color: #fde047;
+}
+
+/* Lobby: the content scrolls, the status line and LEAVE / START stay pinned at the bottom. */
+.lobby-screen .panel.lobby {
+  display: flex;
+  flex-direction: column;
+  height: calc(var(--px) * 340);
+  overflow: hidden;
+}
+
+.lobby-screen .lobby-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: calc(var(--px) * 3);
+  scrollbar-color: #4b5563 transparent;
+}
+
+.lobby-screen .panel .swatch {
+  width: calc(var(--px) * 11);
+  height: calc(var(--px) * 11);
+}
+
+.lobby-screen .colors {
+  grid-template-columns: repeat(16, calc(var(--px) * 11));
+}

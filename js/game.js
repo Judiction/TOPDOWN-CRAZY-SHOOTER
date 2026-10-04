@@ -568,7 +568,7 @@ function fireLaser(game, p) {
     }
   }
   for (const o of Object.values(game.players)) {
-    if (!o.alive || o.id === p.id) continue;
+    if (!o.alive || o.id === p.id || (p.color && o.color === p.color)) continue;    // not the shooter's team
     const along = Math.max(0, Math.min(len, (o.x - p.x) * dx + (o.y - p.y) * dy));
     const miss = Math.hypot(o.x - (p.x + dx * along), o.y - (p.y + dy * along));
     if (miss <= LASER_WIDTH + playerRadius(o)) hurtPlayer(game, o, LASER_DAMAGE, p.id);
@@ -583,6 +583,7 @@ function fire(game, p, angle, speed, { kind = 'pistol', ricochet = false, range 
   game.bullets.push({
     id: game.nextBulletId++,
     owner: p.id,
+    team: p.color,                    // same color = same team: teammates can't hurt each other
     kind,
     x: p.x,
     y: p.y,
@@ -601,11 +602,16 @@ function canHurt(b, p) {
   return p.alive && (p.id !== b.owner || b.bounced);
 }
 
+// A teammate of whoever fired/caused something (but not that player themselves).
+function isTeammate(p, team, ownerId) {
+  return !!team && p.color === team && p.id !== ownerId;
+}
+
 // Rockets turn (at a limited rate) toward the nearest living enemy.
 function steerRocket(game, b, dt) {
   let target = null, best = Infinity;
   for (const p of Object.values(game.players)) {
-    if (!p.alive || p.id === b.owner || p.ghost > 0) continue;    // can't lock onto what you can't see
+    if (!p.alive || p.id === b.owner || p.ghost > 0 || isTeammate(p, b.team, b.owner)) continue;   // not teammates, not ghosts
     const d = (p.x - b.x) ** 2 + (p.y - b.y) ** 2;
     if (d < best) {
       best = d;
@@ -641,8 +647,8 @@ function stepBullets(game, dt) {
     if (b.life !== Infinity) {
       b.life -= dt;
       if (b.life <= 0) {
-        if (kind === 'rocket') explode(game, b.x, b.y, null, { by: b.owner });
-        else if (kind === 'grenade') explode(game, b.x, b.y, null, { damage: GRENADE_DAMAGE, radius: GRENADE_RADIUS, by: b.owner });
+        if (kind === 'rocket') explode(game, b.x, b.y, null, { by: b.owner, team: b.team });
+        else if (kind === 'grenade') explode(game, b.x, b.y, null, { damage: GRENADE_DAMAGE, radius: GRENADE_RADIUS, by: b.owner, team: b.team });
         return false;                 // flames just burn out
       }
     }
@@ -664,7 +670,7 @@ function stepBullets(game, dt) {
       const outY = b.y < 0 || b.y >= ARENA.h;
       if (outX || outY) {
         if (kind === 'rocket') {
-          explode(game, clamp(b.x, 0, ARENA.w - 1), clamp(b.y, 0, ARENA.h - 1), null, { by: b.owner });
+          explode(game, clamp(b.x, 0, ARENA.w - 1), clamp(b.y, 0, ARENA.h - 1), null, { by: b.owner, team: b.team });
           return false;
         }
         if (kind === 'grenade') {
@@ -685,7 +691,7 @@ function stepBullets(game, dt) {
 
       if (wallAt(game, b.x, b.y)) {
         if (kind === 'rocket') {
-          explode(game, b.x, b.y, null, { by: b.owner });
+          explode(game, b.x, b.y, null, { by: b.owner, team: b.team });
           return false;
         }
         if (kind === 'sniper') {
@@ -717,22 +723,33 @@ function stepBullets(game, dt) {
 
       for (const p of players) {
         if (!canHurt(b, p)) continue;
+        // Teammates block each other's shots without taking damage (flames and grenades pass through).
+        const friendly = isTeammate(p, b.team, b.owner);
+        if (friendly && (kind === 'flame' || kind === 'grenade')) continue;
 
         // Shield spheres catch bullets before they reach the player. Each sphere stops SHIELD_HITS bullets.
         const sr = SHIELD_RADIUS + BULLET_RADIUS;
         const sphere = shieldPositions(p).find((s) => (s.x - b.x) ** 2 + (s.y - b.y) ** 2 <= sr * sr);
+        if (sphere && friendly) {
+          if (kind === 'rocket') explode(game, b.x, b.y, null, { by: b.owner, team: b.team });
+          return false;
+        }
         if (sphere) {
           p.shields[sphere.i] -= 1;
           emit(game, 'shield', { x: b.x, y: b.y, broke: p.shields[sphere.i] <= 0 });
           if (p.shields.every((hits) => hits <= 0)) p.shields = null;
-          if (kind === 'rocket') explode(game, b.x, b.y, null, { by: b.owner });
-          if (kind === 'grenade') explode(game, b.x, b.y, null, { damage: GRENADE_DAMAGE, radius: GRENADE_RADIUS, by: b.owner });
+          if (kind === 'rocket') explode(game, b.x, b.y, null, { by: b.owner, team: b.team });
+          if (kind === 'grenade') explode(game, b.x, b.y, null, { damage: GRENADE_DAMAGE, radius: GRENADE_RADIUS, by: b.owner, team: b.team });
           return false;
         }
 
         // Bullets never ricochet off players — they just hit.
         const r = playerRadius(p) + BULLET_RADIUS;
         if ((p.x - b.x) ** 2 + (p.y - b.y) ** 2 > r * r) continue;
+        if (friendly) {
+          if (kind === 'rocket') explode(game, b.x, b.y, null, { by: b.owner, team: b.team });
+          return false;
+        }
         if (kind === 'flame') {
           // Flames pass through players, burning them at a limited rate.
           if (game.time >= p.burnUntil) {
@@ -743,9 +760,9 @@ function stepBullets(game, dt) {
         }
         if (kind === 'rocket') {
           hurtPlayer(game, p, ROCKET_HIT_DAMAGE, b.owner);
-          explode(game, b.x, b.y, p, { by: b.owner });
+          explode(game, b.x, b.y, p, { by: b.owner, team: b.team });
         } else if (kind === 'grenade') {
-          explode(game, b.x, b.y, null, { damage: GRENADE_DAMAGE, radius: GRENADE_RADIUS, by: b.owner });
+          explode(game, b.x, b.y, null, { damage: GRENADE_DAMAGE, radius: GRENADE_RADIUS, by: b.owner, team: b.team });
         } else {
           hurtPlayer(game, p, kind === 'sniper' ? SNIPER_DAMAGE : 1, b.owner);
         }
@@ -768,10 +785,10 @@ function reflect(b, sideX, sideY) {
 
 // Blast (rockets, grenades): chews a big hole in walls and hurts everyone nearby — the shooter too.
 // `direct` already took the direct-hit damage, so the blast skips them.
-function explode(game, x, y, direct, { damage = EXPLOSION_DAMAGE, radius = EXPLOSION_RADIUS, by = null } = {}) {
+function explode(game, x, y, direct, { damage = EXPLOSION_DAMAGE, radius = EXPLOSION_RADIUS, by = null, team = null } = {}) {
   chip(game, x, y, breakWall(game, x, y, EXPLOSION_WALL_RADIUS * (radius / EXPLOSION_RADIUS)), true);
   for (const p of Object.values(game.players)) {
-    if (!p.alive || p === direct) continue;
+    if (!p.alive || p === direct || isTeammate(p, team, by)) continue;
     if (Math.hypot(p.x - x, p.y - y) <= radius + playerRadius(p)) hurtPlayer(game, p, damage, by);
   }
   emit(game, 'explode', { x, y, r: radius });
@@ -808,7 +825,7 @@ function deathBlast(game, p, by) {
   emit(game, 'deathBlast', { x: p.x, y: p.y, r, color: p.color });
   chip(game, p.x, p.y, breakWall(game, p.x, p.y, r), true);
   for (const o of Object.values(game.players)) {
-    if (o === p || !o.alive) continue;
+    if (o === p || !o.alive || (p.color && o.color === p.color)) continue;          // teammates are spared
     if (Math.hypot(o.x - p.x, o.y - p.y) <= r + playerRadius(o)) hurtPlayer(game, o, DEATH_BLAST_DAMAGE, by);
   }
 }

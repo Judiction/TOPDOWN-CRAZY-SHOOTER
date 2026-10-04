@@ -1,7 +1,7 @@
 // Menus (title, lobby, pause, winner screen) as plain HTML laid over the canvas.
 // Sizes use --px (one game pixel in CSS px, set by initCanvas) so the menus match the pixel art.
 
-import { COLORS, SETTING_DEFS, MAX_PLAYERS, NAME_MAX } from './settings.js';
+import { COLORS, SETTING_DEFS, MAX_PLAYERS, NAME_MAX, teamsOf, teamCount } from './settings.js';
 import { canStart } from './room.js';
 import { mountLogo } from './logo.js';
 import { powerupBadge } from './render.js';
@@ -88,6 +88,7 @@ export function createUI(root, handlers) {
     const n = el(`
       <div class="lobby-screen">
         <div class="panel lobby">
+          <div class="lobby-body">
           <div class="lobby-head">
             <h2>LOBBY</h2>
             <div class="code">ROOM <b id="ui-room"></b></div>
@@ -95,6 +96,12 @@ export function createUI(root, handlers) {
           <button data-act="copy" id="ui-copy" class="small">COPY INVITE LINK</button>
           <h3>PLAYERS <span id="ui-count"></span></h3>
           <ul id="ui-players" class="players"></ul>
+          <div id="ui-botpick" class="botpick" hidden>
+            <h3>COLOR FOR <b id="ui-botname"></b></h3>
+            <div class="colors">
+              ${COLORS.map((c) => `<button class="swatch" data-botcolor="${c}" style="--c:${c}" title="${c}"></button>`).join('')}
+            </div>
+          </div>
           <button data-act="addBot" id="ui-addbot" class="small">+ ADD BOT</button>
           <div class="me-row">
             <div>
@@ -102,12 +109,13 @@ export function createUI(root, handlers) {
               <input id="ui-lname" maxlength="${NAME_MAX}" spellcheck="false" autocomplete="off">
             </div>
           </div>
-          <h3>YOUR COLOR</h3>
+          <h3>YOUR COLOR <span id="ui-teamwarn" class="team-warn" hidden>MATCHING COLORS WILL BE IN THE SAME TEAM!</span></h3>
           <div id="ui-colors" class="colors">
             ${COLORS.map((c) => `<button class="swatch" data-color="${c}" style="--c:${c}" title="${c}"></button>`).join('')}
           </div>
           <h3>SETTINGS</h3>
           <div id="ui-settings" class="settings"></div>
+          </div>
           <p id="ui-status" class="status"></p>
           <div class="lobby-foot">
             <button data-act="leave">LEAVE</button>
@@ -121,6 +129,14 @@ export function createUI(root, handlers) {
       if (!b || b.disabled) return;
       const d = b.dataset;
       if (d.color) handlers.onAction({ type: 'color', color: d.color });
+      else if (d.act === 'pickBot') {
+        botPicking = botPicking === d.id ? null : d.id;       // click the dot again to close
+        updateLobby(lastRoom, lastLocalId);
+      } else if (d.botcolor) {
+        handlers.onAction({ type: 'botColor', id: botPicking, color: d.botcolor });
+        botPicking = null;
+        updateLobby(lastRoom, lastLocalId);
+      }
       else if (d.act === 'addBot') handlers.onAction({ type: 'addBot' });
       else if (d.act === 'removeBot') handlers.onAction({ type: 'removeBot', id: d.id });
       else if (d.act === 'setting') {
@@ -140,6 +156,7 @@ export function createUI(root, handlers) {
   let lastRoom = null;
 
   let lastLocalId = null;
+  let botPicking = null;                // id of the bot whose color picker is open (host only)
 
   function updateLobby(room, localId) {
     lastRoom = room;
@@ -157,16 +174,29 @@ export function createUI(root, handlers) {
         const tags = [p.id === room.hostId && 'HOST', p.isBot && 'BOT', p.id === localId && 'YOU', p.waiting && 'NEXT GAME']
           .filter(Boolean).map((t) => `<i>${t}</i>`).join('');
         const kick = isHost && p.isBot && !room.inMatch ? `<button class="x" data-act="removeBot" data-id="${esc(p.id)}">X</button>` : '';
-        return `<li><span class="dot" style="--c:${p.color}"></span><span class="pname">${esc(p.name)}</span>${tags}${kick}</li>`;
+        // The host can recolor bots by clicking their color box.
+        const dot = isHost && p.isBot && !room.inMatch
+          ? `<button class="dot pick${botPicking === p.id ? ' open' : ''}" data-act="pickBot" data-id="${esc(p.id)}" style="--c:${p.color}" title="Change bot color"></button>`
+          : `<span class="dot" style="--c:${p.color}"></span>`;
+        return `<li>${dot}<span class="pname">${esc(p.name)}</span>${tags}${kick}</li>`;
       })
       .join('');
 
-    const taken = new Set(room.players.filter((p) => p.id !== localId).map((p) => p.color));
-    for (const b of root.querySelectorAll('.swatch')) {
+    // Every color can be picked; ones someone else already has get a little marker (= you'd team up).
+    const used = new Set(room.players.filter((p) => p.id !== localId).map((p) => p.color));
+    for (const b of root.querySelectorAll('#ui-colors .swatch')) {
       const c = b.dataset.color;
       b.classList.toggle('mine', me?.color === c);
-      b.classList.toggle('taken', taken.has(c));
-      b.disabled = taken.has(c);
+      b.classList.toggle('used', used.has(c));
+    }
+    $('#ui-teamwarn').hidden = teamCount(room.players) === room.players.length;
+
+    const bot = isHost && !room.inMatch && room.players.find((p) => p.id === botPicking && p.isBot);
+    if (!bot) botPicking = null;
+    $('#ui-botpick').hidden = !bot;
+    if (bot) {
+      $('#ui-botname').textContent = bot.name;
+      for (const b of root.querySelectorAll('#ui-botpick .swatch')) b.classList.toggle('mine', b.dataset.botcolor === bot.color);
     }
 
     const nameInput = $('#ui-lname');
@@ -188,7 +218,9 @@ export function createUI(root, handlers) {
       ? room.inMatch ? 'GAME IN PROGRESS. YOU PLAY IN THE NEXT ONE!' : 'WAITING FOR THE HOST TO START'
       : room.players.length < 2
         ? 'ADD A BOT OR WAIT FOR FRIENDS'
-        : '';
+        : teamCount(room.players) < 2
+          ? 'YOU NEED AT LEAST 2 TEAMS (DIFFERENT COLORS)'
+          : '';
   }
 
   // ---- how to play: instructions on the right, a private practice arena behind ----
@@ -261,6 +293,27 @@ export function createUI(root, handlers) {
       if (e.target.closest('[data-act]')?.dataset.act === 'back') handlers.onBack();
     });
     show(n, 'howto');
+    autoScroll(n.querySelector('.howto-scroll'));
+  }
+
+  // After a few seconds, slowly scroll the instructions so it's obvious there's more below.
+  // Stops for good as soon as the reader scrolls, clicks or touches it themselves.
+  function autoScroll(box) {
+    const DELAY = 5000, SPEED = 18;     // ms before it starts, CSS px per second
+    let stopped = false, last = null, pos = 0;
+    const stop = () => (stopped = true);
+    for (const ev of ['wheel', 'pointerdown', 'touchstart', 'keydown']) box.addEventListener(ev, stop, { passive: true });
+    setTimeout(() => {
+      pos = box.scrollTop;
+      const tick = (now) => {
+        if (stopped || !box.isConnected) return;
+        if (last !== null) pos += (SPEED * (now - last)) / 1000;
+        last = now;
+        box.scrollTop = pos;
+        if (box.scrollTop + box.clientHeight < box.scrollHeight - 1) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    }, DELAY);
   }
 
   // ---- in-match menu (ESC) and winner screen ----
@@ -282,15 +335,16 @@ export function createUI(root, handlers) {
   }
 
   function showGameOver(match, isHost) {
-    const winner = match.roster.find((r) => r.id === match.winner);
-    const rows = [...match.roster]
-      .sort((a, b) => (match.scores[b.id] ?? 0) - (match.scores[a.id] ?? 0))
-      .map((r) => `<li><span class="dot" style="--c:${r.color}"></span><span class="pname">${esc(r.name)}</span><b>${match.scores[r.id] ?? 0}</b></li>`)
+    const teams = teamsOf(match.roster);
+    const winner = teams.find((t) => t.key === match.winner);
+    const rows = [...teams]
+      .sort((a, b) => (match.scores[b.key] ?? 0) - (match.scores[a.key] ?? 0))
+      .map((t) => `<li><span class="dot" style="--c:${t.color}"></span><span class="pname">${esc(t.name)}</span><b>${match.scores[t.key] ?? 0}</b></li>`)
       .join('');
     const n = el(`
       <div class="panel gameover">
         <h1 class="winner" style="color:${winner?.color ?? '#fff'}">${esc(winner?.name ?? '???')}</h1>
-        <h2>WINS THE GAME!</h2>
+        <h2>${winner && winner.members.length > 1 ? 'WIN THE GAME!' : 'WINS THE GAME!'}</h2>
         <ul class="players scores">${rows}</ul>
         ${isHost
           ? '<button data-act="again" class="big">PLAY AGAIN</button><button data-act="menu">MAIN MENU</button>'

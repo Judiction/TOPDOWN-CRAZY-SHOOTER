@@ -36,6 +36,21 @@ export function gameRules(settings) {
   };
 }
 
+// Players (and bots) with the same color are a team. Teams come in join order of their first member;
+// a team's key is its color. A solo player is simply a team of one.
+export function teamsOf(roster) {
+  const byColor = new Map();
+  for (const r of roster) {
+    if (!byColor.has(r.color)) byColor.set(r.color, { key: r.color, color: r.color, members: [] });
+    byColor.get(r.color).members.push(r);
+  }
+  return [...byColor.values()].map((t) => ({ ...t, name: t.members.map((m) => m.name).join(' & ') }));
+}
+
+export function teamCount(players) {
+  return new Set(players.map((p) => p.color)).size;
+}
+
 export function cleanName(name) {
   const clean = String(name ?? '').replace(/[^\x20-\x7e]/g, '').trim().slice(0, NAME_MAX);
   return clean || 'PLAYER';

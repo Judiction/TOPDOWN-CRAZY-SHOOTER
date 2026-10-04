@@ -10,6 +10,7 @@ import {
 } from './fx.js';
 import { powerupIcon } from './icons.js';
 import { createBackground, BG_W, BG_H } from './background.js';
+import { teamsOf } from './settings.js';
 import { PX, VIEW_W, VIEW_H, snap, disc, ring, drawSprite, rect, drawText, hexToRgb, textSprite } from './pixel.js';
 
 const ORPHAN_RGB = [107, 114, 128];
@@ -567,16 +568,17 @@ export function renderMatchHud(ctx, match, localId) {
   const under = (x0, y0, x1, y1) =>
     Object.values(game.players).some((p) => p.alive && p.x > x0 && p.x < x1 && p.y > y0 && p.y < y1);
 
-  // Top-left: every player's name and rounds won.
+  // Top-left: one row per team (a solo player is a team of one) with its rounds won.
+  const teams = teamsOf(match.roster);
   let y = 14;
-  ctx.globalAlpha = under(0, 0, 250, 30 + match.roster.length * 22) ? 0.3 : 1;
-  for (const r of match.roster) {
-    const p = game.players[r.id];
-    const alive = p && p.alive;
+  ctx.globalAlpha = under(0, 0, 270, 30 + teams.length * 22) ? 0.3 : 1;
+  for (const t of teams) {
+    const alive = t.members.some((r) => game.players[r.id]?.alive);
     rect(ctx, 16, y + 4, 10, 10, BAR_BG);
-    rect(ctx, 18, y + 6, 6, 6, alive ? r.color : darken(r.color));
-    drawText(ctx, r.name, 34, y, { color: alive ? '#ffffff' : '#9ca3af' });
-    drawText(ctx, `${match.scores[r.id] ?? 0}`, 214, y, { color: '#ffe066', align: 'right' });
+    rect(ctx, 18, y + 6, 6, 6, alive ? t.color : darken(t.color));
+    const name = t.name.length > 17 ? `${t.name.slice(0, 16)}..` : t.name;
+    drawText(ctx, name, 34, y, { color: alive ? '#ffffff' : '#9ca3af' });
+    drawText(ctx, `${match.scores[t.key] ?? 0}`, 254, y, { color: '#ffe066', align: 'right' });
     y += 22;
   }
 
@@ -613,16 +615,23 @@ export function renderMatchHud(ctx, match, localId) {
     drawText(ctx, 'GO!', cx, cy, { size: 16, scale: 9 - 4 * e, color: '#4ade80', align: 'center', valign: 'middle' });
     ctx.globalAlpha = 1;
   } else if (match.phase === 'roundEnd') {
-    const w = match.roster.find((r) => r.id === match.roundWinner);
+    const w = teams.find((t) => t.key === match.roundWinner);
     if (w) {
-      drawText(ctx, w.name, cx, cy - 30, { size: 16, scale: 2, color: w.color, align: 'center', valign: 'middle' });
-      drawText(ctx, 'WINS THE ROUND', cx, cy + 34, { size: 16, align: 'center', valign: 'middle' });
+      // Every teammate's name; long team names get a smaller size so they fit.
+      drawText(ctx, w.name, cx, cy - 30, { size: 16, scale: w.name.length > 16 ? 1 : 2, color: w.color, align: 'center', valign: 'middle' });
+      drawText(ctx, w.members.length > 1 ? 'WIN THE ROUND' : 'WINS THE ROUND', cx, cy + 34, { size: 16, align: 'center', valign: 'middle' });
     } else {
       drawText(ctx, 'DRAW!', cx, cy, { size: 16, scale: 3, color: '#d1d5db', align: 'center', valign: 'middle' });
     }
   }
 
   const me = game.players[localId];
+  // During the countdown, remind players who's on their team.
+  const myTeam = me && teams.find((t) => t.key === me.color);
+  if (match.phase === 'countdown' && myTeam && myTeam.members.length > 1) {
+    const mates = myTeam.members.filter((r) => r.id !== localId).map((r) => r.name).join(' & ');
+    drawText(ctx, `YOUR TEAM: ${mates}`, cx, ARENA.h - 20, { color: myTeam.color, align: 'center', valign: 'bottom' });
+  }
   if (me && !me.alive && match.phase === 'playing') {
     drawText(ctx, 'YOU ARE OUT - WAIT FOR THE NEXT ROUND', cx, ARENA.h - 20, { color: '#d1d5db', align: 'center', valign: 'bottom' });
   }

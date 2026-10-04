@@ -2,7 +2,7 @@
 // Changes arrive as small actions, applied by the host — exactly how remote players' requests will
 // be handled once networking is in (the host applies them, then shares the updated room).
 
-import { COLORS, MAX_PLAYERS, DEFAULT_SETTINGS, SETTING_DEFS, cleanName } from './settings.js';
+import { COLORS, MAX_PLAYERS, DEFAULT_SETTINGS, SETTING_DEFS, cleanName, teamCount } from './settings.js';
 
 const BOT_NAMES = ['BLIP', 'ZORP', 'KLONK', 'BEEPO', 'GLITCH', 'PIXL', 'SPROCKET', 'NIBBLE', 'WIDGET', 'CHONK', 'ZAPP', 'BONK'];
 
@@ -32,8 +32,9 @@ export function removeMember(room, id) {
   room.players = room.players.filter((p) => p.id !== id);
 }
 
+// Needs at least two players and at least two teams (colors).
 export function canStart(room) {
-  return !room.inMatch && room.players.length >= 2;
+  return !room.inMatch && room.players.length >= 2 && teamCount(room.players) >= 2;
 }
 
 // Returns true if the action changed the room.
@@ -50,8 +51,16 @@ export function applyAction(room, fromId, action) {
       return true;
     }
     case 'color': {
-      if (!COLORS.includes(action.color) || takenColors(room, fromId).has(action.color)) return false;
+      // Any color, even one someone else has: same color = same team.
+      if (!COLORS.includes(action.color) || me.color === action.color) return false;
       me.color = action.color;
+      return true;
+    }
+    case 'botColor': {
+      // Only the host, and only for bots: players pick their own colors.
+      const bot = room.players.find((p) => p.id === action.id && p.isBot);
+      if (!isHost || !bot || !COLORS.includes(action.color) || bot.color === action.color) return false;
+      bot.color = action.color;
       return true;
     }
     case 'setting': {
