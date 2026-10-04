@@ -703,7 +703,11 @@ body:not(.in-match) #hint {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding-right: calc(var(--px) * 3);
+  /* A scrolling box clips anything drawn outside it, and the outlines on swatches and inputs sit
+     just outside their boxes, so leave a few pixels of room on every side (and pull the box back
+     out by the same amount so the layout doesn't move). */
+  padding: calc(var(--px) * 3) calc(var(--px) * 6) calc(var(--px) * 3) calc(var(--px) * 3);
+  margin: calc(var(--px) * -3) calc(var(--px) * -3) 0 calc(var(--px) * -3);
   scrollbar-color: #4b5563 transparent;
 }
 
