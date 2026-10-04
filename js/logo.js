@@ -1,17 +1,15 @@
-// The title logo: "DOODLE DUEL" in the Pixelout font, rendered once to hard pixels, then every frame
-// each row of pixels is slid left/right along a sine wave (so the letters ripple like water), filled
-// with a warm gradient, swept by a white highlight from top to bottom, and given a dark outline and
-// drop shadow. All on a small canvas that CSS scales up crisply.
+// The title logo: "DOODLE DUEL", pre-rendered once from the Pixelout font into assets/logo-mask.png
+// (white text, hard pixels — the font file itself isn't shipped). Every frame each row of pixels is
+// slid left/right along a sine wave (so the letters ripple like water), filled with a warm gradient,
+// swept by a white highlight from top to bottom, and given a dark outline and drop shadow. All on a
+// small canvas that CSS scales up crisply.
 
-const FONT = 'Pixelout';
-const W = 460, H = 170;               // logo size in game pixels
-const LINES = [
-  { text: 'DOODLE', size: 78, y: 4 },
-  { text: 'DUEL', size: 78, y: 84 },
-];
+const W = 460, H = 170;               // logo size in game pixels (same as the mask image)
 const PAD = 6;                        // room for the wave, outline and shadow
 
-let mask = null;                      // white text, hard pixels
+const maskImage = new Image();
+maskImage.src = 'assets/logo-mask.png';
+let mask = null;                      // the mask as a canvas, once loaded
 
 function makeCanvas(w, h) {
   const c = document.createElement('canvas');
@@ -20,35 +18,12 @@ function makeCanvas(w, h) {
   return c;
 }
 
-function buildMask() {
-  const c = makeCanvas(W, H);
-  const g = c.getContext('2d', { willReadFrequently: true });
-  g.fillStyle = '#ffffff';
-  g.textAlign = 'center';
-  g.textBaseline = 'top';
-  for (const line of LINES) {
-    g.font = `${line.size}px ${FONT}`;
-    g.fillText(line.text, W / 2, line.y + PAD);
-  }
-  // Threshold to on/off pixels so the font stays crisp and aliased.
-  const img = g.getImageData(0, 0, W, H);
-  const d = img.data;
-  for (let i = 0; i < d.length; i += 4) {
-    const on = d[i + 3] >= 110;
-    d[i] = d[i + 1] = d[i + 2] = 255;
-    d[i + 3] = on ? 255 : 0;
-  }
-  g.putImageData(img, 0, 0);
-  return c;
-}
-
 const wave = makeCanvas(W, H), waveCtx = wave.getContext('2d');
 const color = makeCanvas(W, H), colorCtx = color.getContext('2d');
 const dark = makeCanvas(W, H), darkCtx = dark.getContext('2d');
 
-// Draws the logo into `canvas` (W x H) for time t (seconds).
+// Draws the logo into a W x H canvas for time t (seconds).
 function drawLogo(ctx, t) {
-  if (!mask) mask = buildMask();
 
   // 1) Ripple: shift every row along a travelling sine wave.
   waveCtx.clearRect(0, 0, W, H);
@@ -97,9 +72,15 @@ export async function mountLogo(canvas) {
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext('2d');
-  try {
-    await document.fonts.load(`78px ${FONT}`);
-  } catch {}
+  if (!mask) {
+    try {
+      await maskImage.decode();
+    } catch {
+      return;                         // image missing: leave the logo blank rather than break the menu
+    }
+    mask = makeCanvas(W, H);
+    mask.getContext('2d').drawImage(maskImage, 0, 0);
+  }
   const start = performance.now();
   const frame = (now) => {
     if (!canvas.isConnected) return;

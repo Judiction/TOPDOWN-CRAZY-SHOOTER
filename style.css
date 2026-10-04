@@ -48,13 +48,6 @@ body:not(.in-match) #hint {
   pointer-events: none;
 }
 
-/* Title logo font (TypeAliens' Pixelout). */
-@font-face {
-  font-family: Pixelout;
-  src: url(Pixelout.ttf) format('truetype');
-  font-display: block;
-}
-
 /* ---- menus ---- */
 /* --px = one game pixel in CSS px (set from JS), so menus scale with the canvas and stay pixel-sharp. */
 
