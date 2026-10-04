@@ -46,7 +46,7 @@ const SHIELD_CRACKED = '#16a34a';
 // Per bullet kind: pixel radius + colors. Ricochet rounds of any gun are red.
 // Visual size only — collision always uses BULLET_RADIUS in game.js.
 const BULLET_STYLE = {
-  pistol:   { r: 3, fill: '#fff27a', outline: '#5c3a00' },
+  pistol:   { r: 2.5, fill: '#fff27a', outline: '#5c3a00' },   // 6 px: a hair smaller than the rest
   pellet:   { r: 3, fill: '#ffc46b', outline: '#5c1a00' },
   uzi:      { r: 3, fill: '#f3e8ff', outline: '#3b0764' },
   sniper:   { r: 3, fill: '#f0fdff', outline: '#0e7490' },
@@ -54,7 +54,7 @@ const BULLET_STYLE = {
   ricochet: { r: 3, fill: '#ff8a8a', outline: '#7f1d1d' },
 };
 // Faint trail behind each bullet: dots back along its direction of travel (no history needed).
-const TRAIL = [[7, 2, 0.5], [14, 2, 0.32], [21, 1, 0.18]];   // [distance behind, pixel radius, opacity]
+const TRAIL = [[6, 2, 0.8], [12, 2, 0.6], [18, 2, 0.42], [25, 1, 0.26]];   // [distance behind, pixel radius, opacity]
 const BAR_BG = '#000000aa';
 
 // Walls are drawn onto a tiny offscreen canvas (one pixel per cell), then scaled up.
