@@ -519,7 +519,7 @@ function shoot(game, p) {
   p.cooldown = def.cooldown;
   const ricochet = kind !== 'rocket' && p.ricochet > 0;
   if (ricochet) p.ricochet -= 1;
-  emit(game, 'shoot', { x: p.x, y: p.y, w: kind, ricochet });
+  emit(game, 'shoot', { x: p.x, y: p.y, w: kind, ricochet, pid: p.id, a: Math.round(p.aim * 100) / 100 });
 
   if (kind === 'pistol') {
     p.ammo -= 1;

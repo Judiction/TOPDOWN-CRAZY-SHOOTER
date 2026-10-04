@@ -250,6 +250,14 @@ export function muzzleDistance(name, radius) {
   return (SPRITES[name] || HAND).muzzle * cellSize(radius);
 }
 
+// Which sprite a player shows for the weapon they hold (the plain hand for the pistol).
+export function spriteFor(weapon) {
+  return weapon && weapon !== 'pistol' && SPRITES[weapon] ? weapon : 'hand';
+}
+
+// Which weapon (sprite) each bullet kind comes out of.
+export const BULLET_SPRITE = { pistol: 'hand', pellet: 'shotgun', uzi: 'uzi', rocket: 'rocket', sniper: 'sniper', flame: 'flamer', grenade: 'grenade' };
+
 const darkColors = {};
 export function darken(hex) {
   if (!darkColors[hex]) {

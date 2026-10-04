@@ -6,12 +6,12 @@ import {
 } from './game.js';
 import {
   updateFx, shakeOffset, drawBackgroundFx, drawWallFx, drawMeteors, drawSmoke, drawTopFx,
-  drawGravity, drawPlayerFx, drawBlackout, drawBanners, drawFloats,
+  drawGravity, drawPlayerFx, drawBlackout, drawBanners, drawFloats, drawShells,
 } from './fx.js';
 import { powerupIcon } from './icons.js';
 import { createBackground, BG_W, BG_H } from './background.js';
 import { teamsOf } from './settings.js';
-import { drawPlayerSprite, darken, muzzleDistance } from './sprites.js';
+import { drawPlayerSprite, darken, muzzleDistance, spriteFor, BULLET_SPRITE } from './sprites.js';
 import { PX, VIEW_W, VIEW_H, snap, disc, ring, drawSprite, rect, drawText, hexToRgb, textSprite } from './pixel.js';
 
 const ORPHAN_RGB = [107, 114, 128];
@@ -194,6 +194,7 @@ export function render(ctx, game, localId, input, { hud = true, pattern = 0 } = 
   drawBackgroundFx(ctx, now);
   drawWalls(ctx, game);
   drawWallFx(ctx, now);
+  drawShells(ctx, now, dt);            // spent shells: over the walls, under everything else
 
   const border = '#3a3f4b';
   rect(ctx, 0, 0, ARENA.w, PX * 2, border);
@@ -213,10 +214,9 @@ export function render(ctx, game, localId, input, { hud = true, pattern = 0 } = 
 
   drawSmoke(ctx, now);
   // Shots start at the player's center (so they can't skip through walls); they stay hidden until
-  // they've left the fingertip, so they look like they come out of the hand.
-  const muzzle = muzzleDistance('hand', PLAYER_RADIUS);
+  // they've left the fingertip or the gun barrel, so they look like they come out of the weapon.
   game.bullets.forEach((b, i) => {
-    if ((b.travel ?? Infinity) < muzzle && !b.bounced) return;
+    if ((b.travel ?? Infinity) < MUZZLE[b.kind] && !b.bounced) return;
     if (b.kind === 'rocket') drawRocket(ctx, b);
     else if (b.kind === 'flame') {
       // Flickering fire pixels.
@@ -249,6 +249,7 @@ export function render(ctx, game, localId, input, { hud = true, pattern = 0 } = 
 }
 
 const FLAME_COLORS = ['#fde047', '#fb923c', '#ef4444', '#fff7ae'];
+const MUZZLE = Object.fromEntries(Object.entries(BULLET_SPRITE).map(([kind, sprite]) => [kind, muzzleDistance(sprite, PLAYER_RADIUS)]));
 const FADING = new Set(['pistol', 'pellet', 'uzi']);
 const BULLET_FADE = ['#fffbd1', '#fff27a', '#ffd84d', '#ffb52e', '#ff8c1a', '#ff6417', '#ff3f1f', '#e0232a'];
 
@@ -372,6 +373,7 @@ function drawRocket(ctx, b) {
 // ---- player sprite: the pointing hand (see sprites.js) ----
 
 function drawCursor(ctx, x, y, angle, radius, color, sprite = 'hand') {
+  // (sprite: 'hand', or the weapon held — see sprites.js)
   drawPlayerSprite(ctx, sprite, x, y, angle, radius, color);
 }
 
@@ -382,14 +384,14 @@ function drawPlayer(ctx, p, rules, isMe, now) {
   let trail = trails.get(p.id);
   if (p.alive && p.speed > 0) {
     if (!trail) trails.set(p.id, (trail = []));
-    trail.push({ x: p.x, y: p.y, aim: p.aim, t: now });
+    trail.push({ x: p.x, y: p.y, aim: p.aim, t: now, sprite: spriteFor(p.weapon) });
   }
   if (trail) {
     while (trail.length && now - trail[0].t > 260) trail.shift();
     trail.forEach((g, i) => {
       if (i % 3) return;
       ctx.globalAlpha = 0.45 * ((i + 1) / trail.length);
-      drawCursor(ctx, g.x, g.y, g.aim, r, p.color);
+      drawCursor(ctx, g.x, g.y, g.aim, r, p.color, g.sprite);
     });
     if (!trail.length) trails.delete(p.id);
   }
@@ -398,7 +400,7 @@ function drawPlayer(ctx, p, rules, isMe, now) {
   ctx.globalAlpha = !p.alive ? 0.25 : p.ghost > 0 ? (Math.floor(now / 90) % 2 ? 0.3 : 0.45) : 1;
   // Just got hit: the whole cursor flashes white.
   const hit = p.alive && justHit.has(p.id);
-  drawCursor(ctx, p.x, p.y, p.aim, r, hit ? '#ffffff' : p.color);
+  drawCursor(ctx, p.x, p.y, p.aim, r, hit ? '#ffffff' : p.color, spriteFor(p.weapon));
   ctx.globalAlpha = 1;
 
   if (!p.alive) return;

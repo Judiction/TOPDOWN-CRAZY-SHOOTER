@@ -5,6 +5,7 @@
 
 import { ARENA, COLS, ROWS, EXPLOSION_RADIUS, MAP_EVENTS, meteorRadius, meteorFlashes, playerRadius } from './game.js';
 import { PX, VIEW_W, VIEW_H, snap, disc, ring, drawSprite, drawText } from './pixel.js';
+import { muzzleDistance } from './sprites.js';
 
 const booms = [];                     // { x, y, r, start, dur }
 const beams = [];                     // laser: { x, y, x2, y2, color, start }
@@ -87,6 +88,7 @@ export function updateFx(game, now, wallImage, localId) {
   for (const e of events) {
     if (e.id <= seenEventId) continue;
     seenEventId = e.id;
+    if (e.type === 'shoot' && SHELLS[e.w] && !hidden(e.pid)) ejectShell(e, now);
     if (BANNERS[e.type]) {
       const [text, color] = BANNERS[e.type];
       banners.length = 0;               // one announcement at a time: the newest replaces the old
@@ -107,7 +109,9 @@ export function updateFx(game, now, wallImage, localId) {
       startErase(now, wallImage);
       invertFlash = { start: now, dur: 650 };
     } else if (e.type === 'laser') {
-      beams.push({ x: e.x, y: e.y, x2: e.x2, y2: e.y2, color: e.color, start: now });
+      // The beam leaves from the laser gun's tip, not the middle of the hand.
+      const len = Math.hypot(e.x2 - e.x, e.y2 - e.y) || 1, m = muzzleDistance('laser', 18);
+      beams.push({ x: e.x + ((e.x2 - e.x) / len) * m, y: e.y + ((e.y2 - e.y) / len) * m, x2: e.x2, y2: e.y2, color: e.color, start: now });
       addShake(now, 7, 250);
     } else if (e.type === 'inkstorm') {
       storm = { start: now, bolts: STORM_STRIKES.map(makeBolt) };
@@ -153,6 +157,81 @@ function makeBolt() {
   }
   pts.push([x, end]);
   return pts;
+}
+
+// ---- spent shells ----
+// Pistol, uzi, shotgun and sniper kick a casing out of the right side of the gun; grenades drop their
+// pin ring. Plain colored rectangles that tumble (by flipping orientation), slide to a stop and fade
+// quickly. Capped, so even 8 players on full auto stay cheap.
+
+const SHELLS = {
+  pistol: { w: 2, h: 1, color: '#d1d5db', edge: '#6b7280', life: 650 },   // small silver
+  uzi: { w: 2, h: 1, color: '#facc15', edge: '#a16207', life: 550 },      // small gold
+  shotgun: { w: 3, h: 2, color: '#ef4444', edge: '#7f1d1d', life: 800 },  // big red
+  sniper: { w: 3, h: 1, color: '#e5e7eb', edge: '#4b5563', life: 900 },   // long silver
+  grenade: { ring: true, color: '#d1d5db', edge: '#4b5563', life: 900 },  // the pin
+};
+const MAX_SHELLS = 250;
+const shells = [];
+
+function ejectShell(e, now) {
+  const def = SHELLS[e.w];
+  const aim = e.a ?? 0;
+  const muzzle = muzzleDistance(e.w === 'pistol' ? 'hand' : e.w, 18);
+  // Out of the right-hand side of the gun, a bit backward, with some randomness.
+  const dir = aim + Math.PI / 2 + 0.35 + (Math.random() - 0.5) * 0.9;
+  const speed = 110 + Math.random() * 120;
+  shells.push({
+    x: e.x + Math.cos(aim) * muzzle * 0.5,
+    y: e.y + Math.sin(aim) * muzzle * 0.5,
+    vx: Math.cos(dir) * speed,
+    vy: Math.sin(dir) * speed,
+    spin: 8 + Math.random() * 14,          // orientation flips per second while it flies
+    phase: Math.random(),
+    born: now,
+    def,
+  });
+  if (shells.length > MAX_SHELLS) shells.splice(0, shells.length - MAX_SHELLS);
+}
+
+export function drawShells(ctx, now, dt) {
+  const drag = Math.exp(-4.5 * dt);
+  for (let i = shells.length - 1; i >= 0; i--) {
+    const s = shells[i];
+    const k = (now - s.born) / s.def.life;
+    if (k >= 1) {
+      shells.splice(i, 1);
+      continue;
+    }
+    s.x += s.vx * dt;
+    s.y += s.vy * dt;
+    s.vx *= drag;
+    s.vy *= drag;
+    const moving = Math.abs(s.vx) + Math.abs(s.vy) > 15;
+    if (moving) s.phase += s.spin * dt;
+    ctx.globalAlpha = k < 0.6 ? 1 : (1 - k) / 0.4;
+    const x = snap(s.x), y = snap(s.y);
+    if (s.def.ring) {
+      // A tiny pixel ring: the grenade pin.
+      ctx.fillStyle = s.def.edge;
+      ctx.fillRect(x - PX, y - PX * 2, PX * 3, PX * 4);
+      ctx.fillRect(x - PX * 2, y - PX, PX * 5, PX * 2);
+      ctx.fillStyle = s.def.color;
+      ctx.fillRect(x, y - PX, PX, PX);
+      ctx.fillRect(x - PX, y, PX, PX);
+      ctx.fillRect(x + PX, y, PX, PX);
+      ctx.fillRect(x, y + PX, PX, PX);
+      continue;
+    }
+    // Tumbling: lying one way, then the other.
+    const flip = Math.floor(s.phase) % 2 === 1;
+    const w = (flip ? s.def.h : s.def.w) * PX, h = (flip ? s.def.w : s.def.h) * PX;
+    ctx.fillStyle = s.def.edge;
+    ctx.fillRect(x - PX, y - PX, w + PX * 2, h + PX * 2);
+    ctx.fillStyle = s.def.color;
+    ctx.fillRect(x, y, w, h);
+  }
+  ctx.globalAlpha = 1;
 }
 
 function burst(x, y, color, n, now, shape) {
