@@ -3,7 +3,7 @@
 // sparkles and big announcement banners. Purely cosmetic and local to each screen, so nothing here
 // is sent over the network.
 
-import { ARENA, COLS, ROWS, EXPLOSION_RADIUS, MAP_EVENTS, meteorRadius, meteorFlashes, playerRadius } from './game.js';
+import { ARENA, COLS, ROWS, EXPLOSION_RADIUS, MAP_EVENTS, PAINT_SLOT, meteorRadius, meteorFlashes, playerRadius } from './game.js';
 import { PX, VIEW_W, VIEW_H, snap, disc, ring, drawSprite, drawText } from './pixel.js';
 import { muzzleDistance } from './sprites.js';
 
@@ -130,10 +130,17 @@ export function updateFx(game, now, wallImage, localId) {
       burst(e.x, e.y, game.players[e.pid]?.color || '#3b82f6', 18, now, 'drop');
     } else if (e.type === 'chip') {
       // Pixel bits off a wall, a little brighter than the wall itself.
-      const owner = Object.values(game.players).find((p) => p.slot === e.slot);
-      burst(e.x, e.y, brighten(owner?.color || '#9ca3af'), e.big ? 16 : 7, now, 'chip');
+      if (e.slot === PAINT_SLOT) {
+        for (let i = 0; i < (e.big ? 8 : 4); i++) burst(e.x, e.y, rainbowHex(Math.floor(Math.random() * 64)), 2, now, 'chip');
+      } else {
+        const owner = Object.values(game.players).find((p) => p.slot === e.slot);
+        burst(e.x, e.y, brighten(owner?.color || '#9ca3af'), e.big ? 16 : 7, now, 'chip');
+      }
     } else if (e.type === 'paintbomb') {
-      for (let i = 0; i < 40; i++) burst(Math.random() * ARENA.w, Math.random() * ARENA.h, e.color, 1, now, 'drop');
+      for (let i = 0; i < 80; i++) burst(Math.random() * ARENA.w, Math.random() * ARENA.h, rainbowHex(i * 7), 1, now, 'drop');
+    } else if (e.type === 'pickup' && e.random && e.kind === 'meteor') {
+      banners.length = 0;               // the other map events announce themselves; meteors need a banner
+      banners.push({ text: 'METEOR SHOWER!', color: '#fdba74', start: now, dur: BANNER_MS });
     }
   }
   // Rocket smoke: a puff behind every rocket each frame.

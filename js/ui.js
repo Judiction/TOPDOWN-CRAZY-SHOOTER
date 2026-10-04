@@ -54,6 +54,7 @@ export function createUI(root, handlers) {
           <p class="msg" id="ui-msg"></p>
         </div>
         <p class="help">WASD MOVE · MOUSE AIM · CLICK SHOOT · R RELOAD · SPACE + CLICK DRAW · M MUTE · ESC MENU</p>
+        <p class="credit">VIBECODED BY @be_a_stereotype <i>-</i> <a href="https://beastereotype.com" target="_blank" rel="noopener">VISIT WEBSITE</a></p>
       </div>`);
     mountLogo(n.querySelector('.logo-canvas'));
     const nameInput = n.querySelector('#ui-name');
@@ -250,7 +251,7 @@ export function createUI(root, handlers) {
       ['meteor', 'METEORS', 'Get out of the flashing circles'],
       ['blackout', 'BLACKOUT', 'Lights out'],
       ['gravity', 'GRAVITY WELL', 'Everything gets sucked in'],
-      ['paintbomb', 'PAINT BOMB', 'Free walls splat everywhere'],
+      ['paintbomb', 'PAINT BOMB', 'Rainbow splats: shoot them for ink'],
       ['mirror', 'MIRROR WORLD', 'The screen flips'],
       ['inkstorm', 'INK STORM', 'Walls crumble'],
     ]],

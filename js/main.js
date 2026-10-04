@@ -18,7 +18,7 @@ import { initCanvas, render, renderBackdrop, renderMatchHud, setCrosshairHidden 
 import { FONT, clearSpriteCache } from './pixel.js';
 import { initAudio, updateAudio, playUi } from './audio.js';
 import { createUI } from './ui.js';
-import { PROTOCOL, makeCode, cleanCode, openHost, joinHost, keepAlive, errorMessage } from './net.js';
+import { PROTOCOL, makeCode, cleanCode, openHost, joinHost, keepAlive, errorMessage, sendMessage, wholeMessages } from './net.js';
 import { encodeInput, decodeInput, encodeSnapshot, applySnapshot, smoothRemotes } from './netsync.js';
 
 // Wait (briefly) for the pixel font so text isn't first drawn in a fallback font.
@@ -138,7 +138,7 @@ function rememberMe() {
 
 function send(conn, msg) {
   try {
-    if (conn?.open) conn.send(msg);
+    sendMessage(conn, msg);
   } catch {}
 }
 
@@ -241,7 +241,7 @@ function openRoom(attempts) {
 }
 
 function onClientConnection(conn) {
-  conn.on('data', (msg) => onClientMessage(conn, msg));
+  conn.on('data', wholeMessages((msg) => onClientMessage(conn, msg)));
   conn.on('close', () => dropClient(conn.peer));
   conn.on('error', () => dropClient(conn.peer));
 }
@@ -430,7 +430,7 @@ function joinGame(name, rawCode) {
       client.conn = conn;
       client.lastHeard = performance.now();
       app.role = 'client';
-      conn.on('data', onHostMessage);
+      conn.on('data', wholeMessages(onHostMessage));
       conn.on('close', () => app.role === 'client' && goTitle('THE HOST LEFT THE GAME.'));
       send(conn, { t: 'hello', v: PROTOCOL, name: prefs.name, color: prefs.color });
     },

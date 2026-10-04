@@ -96,7 +96,10 @@ const GRAVITY_PULL = 40000;           // pull speed = GRAVITY_PULL / distance (p
 const GRAVITY_MAX_PULL = 230;
 export const MIRROR_DURATION = 8;
 export const MIRROR_FLIP_TIME = 0.5;  // seconds of the flip animation at each end
-export const PAINT_SPLATS = 12;
+export const PAINT_SPLATS = 30;
+export const PAINT_SLOT = 255;        // wall cells from the paint bomb: nobody's, rainbow, ink for whoever breaks them
+export const MAP_EVENT_MIN = 20;      // "random map events" setting: one fires every 20-30 s
+export const MAP_EVENT_MAX = 30;
 export const INK_STORM_FRACTION = 0.3;
 
 // rules: the host's settings that change the simulation. firstEventId lets event ids keep rising
@@ -107,6 +110,7 @@ export function createGame(rules = {}, { firstEventId = 1, lobby = false } = {})
     maxHp: rules.maxHp ?? MAX_HP,
     penCapacity: rules.penCapacity ?? PEN_CAPACITY,
     powerupInterval: rules.powerupInterval ?? POWERUP_INTERVAL,
+    mapEvents: !!rules.mapEvents,
   };
   return {
     rules: r,
@@ -123,6 +127,7 @@ export function createGame(rules = {}, { firstEventId = 1, lobby = false } = {})
     powerups: [],
     nextPowerupId: 1,
     powerupTimer: r.powerupInterval,
+    mapEventTimer: nextMapEventDelay(),
     meteors: [],                      // warning circles: { id, x, y, r, t, dur }
     blackout: null,                   // map events in progress: { t, dur } (+ x, y for gravity, axis for mirror)
     gravity: null,
@@ -135,6 +140,10 @@ export function createGame(rules = {}, { firstEventId = 1, lobby = false } = {})
     nextEventId: firstEventId,
     bgSeed: newBackgroundSeed(),      // picks this round's background art; the host sends it to everyone
   };
+}
+
+function nextMapEventDelay() {
+  return MAP_EVENT_MIN + Math.random() * (MAP_EVENT_MAX - MAP_EVENT_MIN);
 }
 
 export function newBackgroundSeed() {
@@ -326,6 +335,14 @@ export function step(game, inputs, dt) {
       spawnPowerup(game, randomPowerupType(), spot.x, spot.y);
     }
   }
+
+  // Random map events: every 20-30 s one goes off by itself, as if someone had grabbed it.
+  if (game.rules.mapEvents && !game.lobby && (game.mapEventTimer -= dt) <= 0) {
+    game.mapEventTimer = nextMapEventDelay();
+    const kind = MAP_EVENTS[Math.floor(Math.random() * MAP_EVENTS.length)];
+    emit(game, 'pickup', { kind, x: ARENA.w / 2, y: ARENA.h / 2, random: true });
+    applyPowerup(game, null, kind);
+  }
 }
 
 // Picks a random spot that isn't inside a wall, a player or a powerup.
@@ -405,7 +422,7 @@ function applyPowerup(game, p, type) {
   } else if (type === 'mirror') {
     game.mirror = { axis: Math.random() < 0.5 ? 'x' : 'y', t: 0, dur: MIRROR_DURATION };
     emit(game, 'mirror', { axis: game.mirror.axis });
-  } else if (type === 'paintbomb') paintBomb(game, p);
+  } else if (type === 'paintbomb') paintBomb(game);
   else if (type === 'inkstorm') inkStorm(game);
   else if (type === 'eraser') eraseWalls(game);
   else if (type === 'meteor') {
@@ -441,20 +458,23 @@ function stepLobby(game, dt) {
   if (changed) game.wallsVersion++;
 }
 
-// PAINT BOMB: splats of the picker's color all over the map, free of charge.
-function paintBomb(game, p) {
+// PAINT BOMB: rainbow splats all over the map. They belong to nobody: whoever breaks them gets the ink.
+// Splats are spread out on a jittered grid so they cover the whole arena instead of clumping.
+function paintBomb(game) {
+  const cols = 6, rows = Math.ceil(PAINT_SPLATS / cols);
+  const cw = (ARENA.w - 80) / cols, ch = (ARENA.h - 80) / rows;
   for (let i = 0; i < PAINT_SPLATS; i++) {
-    const x = 60 + Math.random() * (ARENA.w - 120), y = 60 + Math.random() * (ARENA.h - 120);
-    const r = 16 + Math.random() * 22;
-    paintBlob(game, p.slot, x, y, r);
-    // A few droplets around each splat.
-    for (let k = 0; k < 4; k++) {
-      const a = Math.random() * Math.PI * 2, d = r + 6 + Math.random() * 18;
-      paintBlob(game, p.slot, x + Math.cos(a) * d, y + Math.sin(a) * d, 4 + Math.random() * 5);
+    const x = 40 + ((i % cols) + Math.random()) * cw, y = 40 + (Math.floor(i / cols) + Math.random()) * ch;
+    const r = 12 + Math.random() * 22;
+    paintBlob(game, PAINT_SLOT, x, y, r);
+    // Droplets around each splat.
+    for (let k = 0; k < 6; k++) {
+      const a = Math.random() * Math.PI * 2, d = r + 5 + Math.random() * 24;
+      paintBlob(game, PAINT_SLOT, x + Math.cos(a) * d, y + Math.sin(a) * d, 3 + Math.random() * 6);
     }
   }
   game.wallsVersion++;
-  emit(game, 'paintbomb', { color: p.color });
+  emit(game, 'paintbomb', {});
 }
 
 function paintBlob(game, slot, x, y, radius) {
@@ -465,6 +485,7 @@ function paintBlob(game, slot, x, y, radius) {
     if (keepClear.some((k) => circleOverlapsCell(k.x, k.y, k.r + PAINT_CLEARANCE, c, r))) return;
     game.walls[idx] = slot;
     game.wallLog?.push(idx, slot);
+    if (game.wallTimes) game.wallTimes[idx] = game.time;   // lobby: fades like any other wall
   });
 }
 
@@ -569,7 +590,7 @@ function fireLaser(game, p) {
   const x2 = p.x + dx * len, y2 = p.y + dy * len;
   let lastChip = -Infinity;
   for (let d = 0; d <= len; d += CELL * 2) {
-    const slot = breakWall(game, p.x + dx * d, p.y + dy * d, LASER_WIDTH);
+    const slot = breakWall(game, p.x + dx * d, p.y + dy * d, LASER_WIDTH, p.id);
     if (slot && d - lastChip > 40) {
       chip(game, p.x + dx * d, p.y + dy * d, slot);
       lastChip = d;
@@ -703,11 +724,11 @@ function stepBullets(game, dt) {
           return false;
         }
         if (kind === 'sniper') {
-          chip(game, b.x, b.y, breakWall(game, b.x, b.y, 6));   // punches straight through, leaving a small hole
+          chip(game, b.x, b.y, breakWall(game, b.x, b.y, 6, b.owner));   // punches straight through, leaving a small hole
           continue;
         }
         if (kind === 'flame') {
-          chip(game, b.x, b.y, breakWall(game, b.x, b.y, 7));   // flames eat walls fast
+          chip(game, b.x, b.y, breakWall(game, b.x, b.y, 7, b.owner));   // flames eat walls fast
           return false;
         }
         // Work out which side was hit (before breaking it), so we know which way to reflect.
@@ -720,7 +741,7 @@ function stepBullets(game, dt) {
           emit(game, 'bounce', { x: b.x, y: b.y });
           continue;
         }
-        const slot = breakWall(game, b.x, b.y);
+        const slot = breakWall(game, b.x, b.y, BREAK_RADIUS, b.owner);
         emit(game, 'wall', { x: b.x, y: b.y });
         chip(game, b.x, b.y, slot);
         if (b.bounces <= 0) return false;
@@ -794,7 +815,7 @@ function reflect(b, sideX, sideY) {
 // Blast (rockets, grenades): chews a big hole in walls and hurts everyone nearby — the shooter too.
 // `direct` already took the direct-hit damage, so the blast skips them.
 function explode(game, x, y, direct, { damage = EXPLOSION_DAMAGE, radius = EXPLOSION_RADIUS, by = null, team = null } = {}) {
-  chip(game, x, y, breakWall(game, x, y, EXPLOSION_WALL_RADIUS * (radius / EXPLOSION_RADIUS)), true);
+  chip(game, x, y, breakWall(game, x, y, EXPLOSION_WALL_RADIUS * (radius / EXPLOSION_RADIUS), by), true);
   for (const p of Object.values(game.players)) {
     if (!p.alive || p === direct || isTeammate(p, team, by)) continue;
     if (Math.hypot(p.x - x, p.y - y) <= radius + playerRadius(p)) hurtPlayer(game, p, damage, by);
@@ -831,7 +852,7 @@ export function hurtPlayer(game, p, amount = 1, by = null) {
 function deathBlast(game, p, by) {
   const r = DEATH_BLAST_RADIUS;
   emit(game, 'deathBlast', { x: p.x, y: p.y, r, color: p.color });
-  chip(game, p.x, p.y, breakWall(game, p.x, p.y, r), true);
+  chip(game, p.x, p.y, breakWall(game, p.x, p.y, r, by), true);
   for (const o of Object.values(game.players)) {
     if (o === p || !o.alive || (p.color && o.color === p.color)) continue;          // teammates are spared
     if (Math.hypot(o.x - p.x, o.y - p.y) <= r + playerRadius(o)) hurtPlayer(game, o, DEATH_BLAST_DAMAGE, by);
@@ -864,9 +885,11 @@ function bounce(b, px, py) {
 
 // Knocks out wall cells around the impact. Anyone can break any wall, but each broken cell's ink
 // goes back to the player who drew it (or their team, see returnInk). Ink from a player who left is lost.
+// Paint bomb cells belong to nobody: their ink goes to `by`, whoever broke them (if anyone).
 // Returns the slot of a wall it broke (for the chip particles), or 0 if there was nothing to break.
-function breakWall(game, x, y, radius = BREAK_RADIUS) {
+function breakWall(game, x, y, radius = BREAK_RADIUS, by = null) {
   const owners = playersBySlot(game);
+  if (by != null && game.players[by]) owners[PAINT_SLOT] = game.players[by];
   let changed = false, hitSlot = 0;
   forCellsAround(x, y, radius, (c, r, idx) => {
     const slot = game.walls[idx];

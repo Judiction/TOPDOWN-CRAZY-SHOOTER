@@ -16,6 +16,7 @@ export const DEFAULT_SETTINGS = {
   maxHp: 10,
   ink: 'normal',
   powerupInterval: 30,    // seconds between powerup spawns; 0 = off
+  mapEvents: false,       // a random map event every 20-30 s
 };
 
 // What the host can change in the lobby, and the allowed values.
@@ -25,6 +26,7 @@ export const SETTING_DEFS = [
   { key: 'maxHp', label: 'HEALTH', options: [5, 10, 15, 20, 25, 30], format: (v) => `${v} HITS` },
   { key: 'ink', label: 'INK', options: ['small', 'normal', 'large'], format: (v) => v.toUpperCase() },
   { key: 'powerupInterval', label: 'POWERUPS', options: [0, 10, 15, 30, 45, 60], format: (v) => (v ? `EVERY ${v}S` : 'OFF') },
+  { key: 'mapEvents', label: 'RANDOM MAP EVENTS', options: [false, true], format: (v) => (v ? 'ON' : 'OFF') },
 ];
 
 // The subset of settings the simulation itself needs.
@@ -33,6 +35,7 @@ export function gameRules(settings) {
     maxHp: settings.maxHp,
     penCapacity: INK_AMOUNTS[settings.ink] ?? INK_AMOUNTS.normal,
     powerupInterval: settings.powerupInterval,
+    mapEvents: !!settings.mapEvents,
   };
 }
 

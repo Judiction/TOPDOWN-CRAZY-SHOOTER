@@ -365,6 +365,30 @@ body:not(.in-match) #hint {
   animation: rise 0.6s 0.5s ease-out both;
 }
 
+.title-screen .credit {
+  margin: 0 !important;
+  text-align: center;
+  color: #9ca3af;
+  text-shadow: var(--px) var(--px) 0 #000;
+  animation: rise 0.6s 0.6s ease-out both;
+}
+
+.title-screen .credit i {
+  font-style: normal;
+  color: #ff5ea8;
+}
+
+.title-screen .credit a {
+  pointer-events: auto;
+  color: #fde047;
+  text-decoration: none;
+  border-bottom: var(--px) solid currentColor;
+}
+
+.title-screen .credit a:hover {
+  color: #fff;
+}
+
 @keyframes logo-drop {
   from { transform: translateY(calc(var(--px) * -140)) scale(0.7); opacity: 0; }
   to { transform: none; opacity: 1; }

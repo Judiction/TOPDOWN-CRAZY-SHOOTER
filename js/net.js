@@ -6,7 +6,37 @@ const PREFIX = 'clickclackboompow-v1-';
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';  // no I or O, so codes are easy to read out loud
 const CONNECT_TIMEOUT = 10000;
 
-export const PROTOCOL = 5;                      // bump when host/client messages change
+export const PROTOCOL = 6;                      // bump when host/client messages change
+
+// WebRTC data channels drop the connection on very large messages (a paint bomb's wall changes can
+// be tens of KB), so big messages are sent as ordered string parts and put back together on arrival.
+const PART_SIZE = 12000;
+
+export function sendMessage(conn, msg) {
+  if (!conn?.open) return;
+  const text = JSON.stringify(msg);
+  if (text.length <= PART_SIZE) {
+    conn.send(msg);
+    return;
+  }
+  const of = Math.ceil(text.length / PART_SIZE);
+  for (let i = 0; i < of; i++) conn.send({ t: 'part', i, of, d: text.slice(i * PART_SIZE, (i + 1) * PART_SIZE) });
+}
+
+// Wraps a data handler so it only ever sees whole messages.
+export function wholeMessages(handler) {
+  let parts = [];
+  return (msg) => {
+    if (msg?.t !== 'part') return handler(msg);
+    if (msg.i === 0) parts = [];
+    parts.push(msg.d);
+    if (parts.length === msg.of) {
+      const text = parts.join('');
+      parts = [];
+      handler(JSON.parse(text));
+    }
+  };
+}
 
 export function makeCode() {
   let code = '';

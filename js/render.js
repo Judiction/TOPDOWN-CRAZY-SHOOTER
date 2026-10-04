@@ -3,6 +3,7 @@ import {
   POWERUP_RADIUS, FAT_DURATION, SMALL_DURATION, SHIELD_RADIUS, SHIELD_HITS,
   playerRadius, brushRadius, shieldPositions, mirrorScale, GHOST_DURATION, SPEED_DURATION,
   LOBBY_WALL_LIFE, LOBBY_WALL_FADE, PLAYER_RADIUS,
+  PAINT_SLOT,
 } from './game.js';
 import {
   updateFx, shakeOffset, drawBackgroundFx, drawWallFx, drawMeteors, drawSmoke, drawTopFx,
@@ -65,7 +66,13 @@ const wallCtx = wallCanvas.getContext('2d');
 const wallPixels = wallCtx.createImageData(COLS, ROWS);
 let wallsDrawnVersion = -1;
 let wallCount = 0;
-const FADE_STEPS = [50, 105, 165, 220];   // lobby wall opacity steps on the way out
+const FADE_STEPS = [50, 105, 165, 220];
+// Paint bomb walls: one rainbow cycle every 96 cells along the diagonal.
+const PAINT_RAINBOW = Array.from({ length: 96 }, (_, i) => {
+  const h = (i / 96) * 6, x = 1 - Math.abs((h % 2) - 1);
+  const [r, g, b] = h < 1 ? [1, x, 0] : h < 2 ? [x, 1, 0] : h < 3 ? [0, 1, x] : h < 4 ? [0, x, 1] : h < 5 ? [x, 0, 1] : [1, 0, x];
+  return [r, g, b].map((v) => Math.round(90 + v * 165));
+});   // lobby wall opacity steps on the way out
 const PING_REACH = 150;                 // how far the start-of-round radar ping spreads (arena units)
 
 // Walls get moving white highlight bands: the walls are copied to a second small canvas each frame
@@ -325,12 +332,15 @@ function drawWalls(ctx, game) {
     // In the lobby, cells fade out in a few hard steps as they near the end of their life.
     const colors = {};
     for (const p of Object.values(game.players)) colors[p.slot] = hexToRgb(p.color);
+    const paintCols = COLS;
     const d = wallPixels.data;
     let count = 0;
     for (let i = 0; i < game.walls.length; i++) {
       const o = i * 4;
       const slot = game.walls[i];
-      const rgb = colors[slot] || ORPHAN_RGB;
+      // Paint bomb cells: a diagonal rainbow across the whole arena.
+      const rgb = slot === PAINT_SLOT ? PAINT_RAINBOW[((i % paintCols) + Math.floor(i / paintCols)) % PAINT_RAINBOW.length]
+        : colors[slot] || ORPHAN_RGB;
       d[o] = rgb[0];
       d[o + 1] = rgb[1];
       d[o + 2] = rgb[2];
