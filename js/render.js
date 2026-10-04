@@ -96,6 +96,42 @@ let flash = null;                     // { color, start }
 
 // The canvas is VIEW_W x VIEW_H real pixels; CSS scales it up with nearest-neighbor (see style.css).
 // We scale by a whole number of device pixels whenever the window allows, so every game pixel is the same size.
+// The aiming crosshair: a pixel-art mouse cursor drawn at the game's pixel scale, so it's as chunky
+// (and as easy to see) as everything else. A real CSS cursor, so it moves with zero lag.
+const CROSSHAIR = [
+  '......XXX......',
+  '......XWX......',
+  '......XWX......',
+  '......XWX......',
+  '......XXX......',
+  '...............',
+  'XXXXX..X..XXXXX',
+  'XWWWX.XWX.XWWWX',
+  'XXXXX..X..XXXXX',
+  '...............',
+  '......XXX......',
+  '......XWX......',
+  '......XWX......',
+  '......XWX......',
+  '......XXX......',
+];
+
+function crosshairCursor(cssPerPixel) {
+  // Browsers cap cursor images at 128 px, so keep it within that.
+  const size = CROSSHAIR.length;
+  const unit = Math.max(2, Math.min(Math.floor(128 / size), Math.round(cssPerPixel)));
+  const c = document.createElement('canvas');
+  c.width = c.height = size * unit;
+  const g = c.getContext('2d');
+  CROSSHAIR.forEach((row, y) => [...row].forEach((ch, x) => {
+    if (ch === '.') return;
+    g.fillStyle = ch === 'W' ? '#ffffff' : '#000000';
+    g.fillRect(x * unit, y * unit, unit, unit);
+  }));
+  const hot = Math.floor((size * unit) / 2);
+  return `url(${c.toDataURL()}) ${hot} ${hot}, crosshair`;
+}
+
 export function initCanvas(canvas) {
   canvas.width = VIEW_W;
   canvas.height = VIEW_H;
@@ -107,6 +143,7 @@ export function initCanvas(canvas) {
     canvas.style.height = `${(VIEW_H * scale) / dpr}px`;
     // Menus size themselves in game pixels via this CSS variable.
     canvas.parentElement.style.setProperty('--px', `${scale / dpr}px`);
+    canvas.style.cursor = crosshairCursor(scale / dpr);
   };
   window.addEventListener('resize', fit);
   fit();
