@@ -2,7 +2,7 @@ import {
   ARENA, COLS, ROWS, BULLET_RADIUS, MAG_SIZE, RELOAD_TIME,
   POWERUP_RADIUS, FAT_DURATION, SMALL_DURATION, SHIELD_RADIUS, SHIELD_HITS,
   playerRadius, brushRadius, shieldPositions, mirrorScale, GHOST_DURATION, SPEED_DURATION,
-  LOBBY_WALL_LIFE, LOBBY_WALL_FADE,
+  LOBBY_WALL_LIFE, LOBBY_WALL_FADE, PLAYER_RADIUS,
 } from './game.js';
 import {
   updateFx, shakeOffset, drawBackgroundFx, drawWallFx, drawMeteors, drawSmoke, drawTopFx,
@@ -11,6 +11,7 @@ import {
 import { powerupIcon } from './icons.js';
 import { createBackground, BG_W, BG_H } from './background.js';
 import { teamsOf } from './settings.js';
+import { drawPlayerSprite, darken, muzzleDistance } from './sprites.js';
 import { PX, VIEW_W, VIEW_H, snap, disc, ring, drawSprite, rect, drawText, hexToRgb, textSprite } from './pixel.js';
 
 const ORPHAN_RGB = [107, 114, 128];
@@ -211,7 +212,11 @@ export function render(ctx, game, localId, input, { hud = true, pattern = 0 } = 
   drawPlayerFx(ctx, game, now, dt);
 
   drawSmoke(ctx, now);
+  // Shots start at the player's center (so they can't skip through walls); they stay hidden until
+  // they've left the fingertip, so they look like they come out of the hand.
+  const muzzle = muzzleDistance('hand', PLAYER_RADIUS);
   game.bullets.forEach((b, i) => {
+    if ((b.travel ?? Infinity) < muzzle && !b.bounced) return;
     if (b.kind === 'rocket') drawRocket(ctx, b);
     else if (b.kind === 'flame') {
       // Flickering fire pixels.
@@ -364,86 +369,10 @@ function drawRocket(ctx, b) {
   drawSprite(ctx, disc(2, '#ffffff', '#3f3f46'), b.x + ux * 3, b.y + uy * 3);
 }
 
-// ---- player sprite: a classic arrow mouse cursor ----
+// ---- player sprite: the pointing hand (see sprites.js) ----
 
-// Pixel mask, tip at the top-left. Edge pixels become the outline, the rest is fill.
-const CURSOR_MASK = [
-  'X',
-  'XX',
-  'XXX',
-  'XXXX',
-  'XXXXX',
-  'XXXXXX',
-  'XXXXXXX',
-  'XXXXXXXX',
-  'XXXXXXXXX',
-  'XXXXXXXXXX',
-  'XXXXXXXXXXX',
-  'XXXXXXX',
-  'XXX.XXXX',
-  'XX..XXXX',
-  'X....XXXX',
-  '.....XXXX',
-  '......XX',
-];
-const CURSOR_ROWS = CURSOR_MASK.length;
-const CURSOR_COLS = Math.max(...CURSOR_MASK.map((row) => row.length));
-const cursorAt = (c, r) => r >= 0 && r < CURSOR_ROWS && CURSOR_MASK[r][c] === 'X';
-// 0 = empty, 1 = outline, 2 = fill
-const CURSOR_CELLS = CURSOR_MASK.map((row, r) =>
-  Array.from({ length: CURSOR_COLS }, (_, c) => {
-    if (!cursorAt(c, r)) return 0;
-    const edge = !cursorAt(c - 1, r) || !cursorAt(c + 1, r) || !cursorAt(c, r - 1) || !cursorAt(c, r + 1);
-    return edge ? 1 : 2;
-  })
-);
-// The sprite is centered on the player by its center of mass, and rotated so the tip points along the aim.
-const CURSOR_CENTER = (() => {
-  let sx = 0, sy = 0, n = 0;
-  CURSOR_CELLS.forEach((row, r) => row.forEach((v, c) => {
-    if (v) { sx += c + 0.5; sy += r + 0.5; n++; }
-  }));
-  return { x: sx / n, y: sy / n };
-})();
-const CURSOR_TIP_ANGLE = Math.atan2(0.5 - CURSOR_CENTER.y, 0.5 - CURSOR_CENTER.x);
-const CURSOR_LENGTH = 2.4;            // sprite height, in player radii
-
-const darkColors = {};
-function darken(hex) {
-  if (!darkColors[hex]) {
-    const [r, g, b] = hexToRgb(hex).map((v) => Math.round(v * 0.55));
-    darkColors[hex] = `rgb(${r}, ${g}, ${b})`;
-  }
-  return darkColors[hex];
-}
-
-// Rasterizes the rotated cursor onto the pixel grid (no smoothing), so it looks like an aliased
-// cursor at any angle. A few hundred samples per player — trivial.
-function drawCursor(ctx, x, y, angle, radius, color) {
-  const scale = (radius * CURSOR_LENGTH) / CURSOR_ROWS;   // arena px per mask cell
-  const rot = angle - CURSOR_TIP_ANGLE;
-  const cos = Math.cos(-rot), sin = Math.sin(-rot);
-  const reach = Math.hypot(CURSOR_COLS, CURSOR_ROWS) * scale;
-  const P = PX;
-  const x0 = Math.floor((x - reach) / P) * P, x1 = x + reach;
-  const y0 = Math.floor((y - reach) / P) * P, y1 = y + reach;
-
-  const fill = new Path2D(), outline = new Path2D();
-  for (let sy = y0; sy < y1; sy += P) {
-    for (let sx = x0; sx < x1; sx += P) {
-      const dx = sx + P / 2 - x, dy = sy + P / 2 - y;
-      const c = Math.floor((dx * cos - dy * sin) / scale + CURSOR_CENTER.x);
-      const r = Math.floor((dx * sin + dy * cos) / scale + CURSOR_CENTER.y);
-      if (c < 0 || c >= CURSOR_COLS || r < 0 || r >= CURSOR_ROWS) continue;
-      const v = CURSOR_CELLS[r][c];
-      if (v === 1) outline.rect(sx, sy, P, P);
-      else if (v === 2) fill.rect(sx, sy, P, P);
-    }
-  }
-  ctx.fillStyle = darken(color);
-  ctx.fill(outline);
-  ctx.fillStyle = color;
-  ctx.fill(fill);
+function drawCursor(ctx, x, y, angle, radius, color, sprite = 'hand') {
+  drawPlayerSprite(ctx, sprite, x, y, angle, radius, color);
 }
 
 function drawPlayer(ctx, p, rules, isMe, now) {
