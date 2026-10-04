@@ -39,6 +39,7 @@ Want to play solo or fill empty seats? The host can **+ ADD BOT** in the lobby.
 
 Pick the **same color** as someone to be on their team. The host can also recolor bots by clicking their color box in the lobby.
 
+- Ink is shared smartly: if your pen is full (or you're out of the round), ink from your broken walls flows to the teammate with the emptiest pen instead of being wasted.
 - Teammates can't hurt each other: your shots stop on a teammate harmlessly, and explosions, lasers and death blasts spare them. Meteors and sudden death still hit everyone.
 - A round ends when only one team has players left standing. That team scores one round.
 - The first team to reach the target number of round wins takes the game.

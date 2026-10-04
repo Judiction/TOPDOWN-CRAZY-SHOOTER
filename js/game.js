@@ -471,7 +471,7 @@ function inkStorm(game) {
     game.walls[i] = 0;
     game.wallLog?.push(i, 0);
     const drawer = owners[slot];
-    if (drawer) drawer.ink = Math.min(game.rules.penCapacity, drawer.ink + 1);
+    if (drawer) returnInk(game, drawer);
   }
   game.wallsVersion++;
   emit(game, 'inkstorm', {});
@@ -855,8 +855,7 @@ function bounce(b, px, py) {
 }
 
 // Knocks out wall cells around the impact. Anyone can break any wall, but each broken cell's ink
-// always goes back to the player who drew it. A drawer's ink + their cells on the map never exceeds
-// their pen capacity, so there's always room; the cap is just a safety net. Ink from a player who left is lost.
+// goes back to the player who drew it (or their team, see returnInk). Ink from a player who left is lost.
 // Returns the slot of a wall it broke (for the chip particles), or 0 if there was nothing to break.
 function breakWall(game, x, y, radius = BREAK_RADIUS) {
   const owners = playersBySlot(game);
@@ -868,7 +867,7 @@ function breakWall(game, x, y, radius = BREAK_RADIUS) {
     game.walls[idx] = 0;
     game.wallLog?.push(idx, 0);
     const drawer = owners[slot];
-    if (drawer) drawer.ink = Math.min(game.rules.penCapacity, drawer.ink + 1);
+    if (drawer) returnInk(game, drawer);
     changed = true;
     hitSlot = slot;
   });
@@ -879,6 +878,24 @@ function breakWall(game, x, y, radius = BREAK_RADIUS) {
 // Little pixel chips flying off a wall that just got hit (purely visual; `big` for blasts).
 function chip(game, x, y, slot, big = false) {
   if (slot) emit(game, 'chip', { x: Math.round(x), y: Math.round(y), slot, big });
+}
+
+// One cell of a broken wall's ink goes back to whoever drew it. If their pen is full (or they're out
+// of the round), it flows to the living teammate with the emptiest pen instead, so a team never
+// wastes ink. It's only lost when the whole team is full.
+function returnInk(game, drawer) {
+  const cap = game.rules.penCapacity;
+  if (drawer.alive && drawer.ink < cap) {
+    drawer.ink += 1;
+    return;
+  }
+  if (!drawer.color) return;
+  let best = null;
+  for (const p of Object.values(game.players)) {
+    if (p === drawer || !p.alive || p.color !== drawer.color || p.ink >= cap) continue;
+    if (!best || p.ink < best.ink) best = p;
+  }
+  if (best) best.ink += 1;
 }
 
 function playersBySlot(game) {
