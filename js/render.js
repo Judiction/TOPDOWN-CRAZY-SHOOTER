@@ -62,6 +62,7 @@ const wallPixels = wallCtx.createImageData(COLS, ROWS);
 let wallsDrawnVersion = -1;
 let wallCount = 0;
 const FADE_STEPS = [50, 105, 165, 220];   // lobby wall opacity steps on the way out
+const PING_REACH = 150;                 // how far the start-of-round radar ping spreads (arena units)
 
 // Walls get moving white highlight bands: the walls are copied to a second small canvas each frame
 // and a sweeping gradient is painted only where wall pixels are ('source-atop'). Cheap — it's 320x180.
@@ -596,6 +597,28 @@ export function renderMatchHud(ctx, match, localId) {
   }
 
   ctx.globalAlpha = 1;
+
+  // Radar ping: during the countdown, rings ripple out from YOUR cursor once per beep so you can spot
+  // where you spawned. Drawn only on your own screen (localId), nothing goes over the network.
+  const meNow = game.players[localId];
+  if (match.phase === 'countdown' && meNow?.alive) {
+    const n = Math.max(1, Math.ceil(match.timer));
+    const beat = Math.min(1, Math.max(0, n - match.timer));     // 0 → 1 through this second
+    // A bold ring each beep, plus a thinner one trailing just behind it.
+    for (const [lag, bold] of [[0, true], [0.28, false]]) {
+      const k = beat - lag;
+      if (k <= 0 || k >= 1) continue;
+      const grow = 1 - (1 - k) ** 2;
+      const r = Math.round((playerRadius(meNow) + 10 + PING_REACH * grow) / PX / 2) * 2;
+      ctx.globalAlpha = (bold ? 1 : 0.6) * (k < 0.5 ? 1 : (1 - k) / 0.5);
+      const band = bold ? [r + 3, r + 2, r + 1, r, r - 1] : [r + 1, r, r - 1];
+      band.forEach((rr, i) => {
+        const edge = i === 0 || i === band.length - 1;
+        drawSprite(ctx, ring(rr, edge ? '#000000' : meNow.color), meNow.x, meNow.y);
+      });
+    }
+    ctx.globalAlpha = 1;
+  }
 
   // Center: countdown, GO!, round result.
   const cy = ARENA.h / 2;
