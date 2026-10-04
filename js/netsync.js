@@ -61,6 +61,8 @@ export function encodeSnapshot(match, { full, events, wallOps, acks }) {
   const g = match.game;
   const snap = {
     t: 'snap',
+    lob: g.lobby ? 1 : 0,
+    gt: r1(g.time),
     r: match.round,
     ph: match.phase,
     tm: r2(match.timer),
@@ -104,7 +106,7 @@ export function applySnapshot(view, snap, myId) {
   if (newRound && !snap.full) return null;          // wait for the round's first full snapshot
 
   if (newRound) {
-    const game = createGame(snap.full.rules);
+    const game = createGame(snap.full.rules, { lobby: !!snap.lob });
     game.bgSeed = snap.full.bg;
     view.game = game;
     view.match = { round: snap.r, settings: snap.full.settings, roster: snap.full.roster, scores: {}, game };
@@ -120,17 +122,28 @@ export function applySnapshot(view, snap, myId) {
       Object.assign(p, { slot, name, color });
     }
     decodeWalls(snap.full.walls, game.walls);
+    if (game.wallTimes) {
+      // Lobby walls fade by age; walls we hadn't seen before start their clock now.
+      for (let i = 0; i < game.walls.length; i++) {
+        if (!game.walls[i]) game.wallTimes[i] = 0;
+        else if (!game.wallTimes[i]) game.wallTimes[i] = snap.gt;
+      }
+    }
     game.wallsVersion++;
   }
 
   if (snap.wo?.length) {
     for (let i = 0; i < snap.wo.length; i += 2) {
       if (snap.wo[i] === -1) game.walls.fill(0);   // eraser
-      else game.walls[snap.wo[i]] = snap.wo[i + 1];
+      else {
+        game.walls[snap.wo[i]] = snap.wo[i + 1];
+        if (game.wallTimes) game.wallTimes[snap.wo[i]] = snap.wo[i + 1] ? snap.gt : 0;
+      }
     }
     game.wallsVersion++;
   }
 
+  game.time = snap.gt;
   Object.assign(match, {
     phase: snap.ph, timer: snap.tm, goTimer: snap.go, suddenDeath: !!snap.sd, roundTime: snap.rt,
     roundWinner: snap.rw, winner: snap.w, scores: snap.sc,
@@ -187,6 +200,7 @@ export function smoothRemotes(game, myId, dt) {
     b.y += b.vy * dt;
     b.travel += Math.hypot(b.vx, b.vy) * dt;
   }
+  game.time += dt;
   for (const m of game.meteors) m.t = Math.min(m.dur, m.t + dt);   // keep the warning flashing smoothly
   for (const e of [game.blackout, game.gravity, game.mirror]) if (e) e.t = Math.min(e.dur, e.t + dt);
 }

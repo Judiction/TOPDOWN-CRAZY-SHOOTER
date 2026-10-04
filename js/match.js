@@ -23,8 +23,8 @@ export const SPAWNS = [
   { x: W / 2, y: M }, { x: W / 2, y: H - M }, { x: M, y: H / 2 }, { x: W - M, y: H / 2 },
 ];
 
-// roster: [{ id, name, color }] in join order.
-export function createMatch(settings, roster) {
+// roster: [{ id, name, color }] in join order. firstEventId continues the lobby's event numbering.
+export function createMatch(settings, roster, { firstEventId = 1 } = {}) {
   const match = {
     settings: { ...settings },
     roster: roster.map(({ id, name, color, isBot }) => ({ id, name, color, isBot: !!isBot })),
@@ -40,6 +40,7 @@ export function createMatch(settings, roster) {
     roundWinner: null,      // id, or null for a draw
     winner: null,
     game: null,
+    firstEventId,
   };
   startRound(match);
   return match;
@@ -48,7 +49,7 @@ export function createMatch(settings, roster) {
 function startRound(match) {
   match.round += 1;
   const game = createGame(gameRules(match.settings), {
-    firstEventId: match.game ? match.game.nextEventId : 1,
+    firstEventId: match.game ? match.game.nextEventId : match.firstEventId,
   });
   // Rotate spawn spots every round so nobody keeps the same corner.
   const n = match.roster.length;

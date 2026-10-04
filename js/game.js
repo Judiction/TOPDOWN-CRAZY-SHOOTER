@@ -86,6 +86,10 @@ export const MEDKIT_HEAL = 5;
 export const KILL_HEAL = 5;          // eliminating someone heals you this much
 export const DEATH_BLAST_RADIUS = 90;  // every player explodes when they die...
 export const DEATH_BLAST_DAMAGE = 2;  // ...hurting everyone caught in it and destroying walls
+
+// Lobby playground: nobody takes damage, ink never runs out, and walls fade away on their own.
+export const LOBBY_WALL_LIFE = 7;     // seconds a lobby wall lasts...
+export const LOBBY_WALL_FADE = 3;     // ...the last few of which it spends fading out
 export const BLACKOUT_DURATION = 8;
 export const GRAVITY_DURATION = 6;
 const GRAVITY_PULL = 40000;           // pull speed = GRAVITY_PULL / distance (px/s), capped below
@@ -97,7 +101,8 @@ export const INK_STORM_FRACTION = 0.3;
 
 // rules: the host's settings that change the simulation. firstEventId lets event ids keep rising
 // across rounds, so listeners never mistake a new round's events for ones they already handled.
-export function createGame(rules = {}, { firstEventId = 1 } = {}) {
+// lobby: the harmless playground players mess around in while waiting for the host.
+export function createGame(rules = {}, { firstEventId = 1, lobby = false } = {}) {
   const r = {
     maxHp: rules.maxHp ?? MAX_HP,
     penCapacity: rules.penCapacity ?? PEN_CAPACITY,
@@ -105,6 +110,9 @@ export function createGame(rules = {}, { firstEventId = 1 } = {}) {
   };
   return {
     rules: r,
+    lobby,
+    wallTimes: lobby ? new Float32Array(COLS * ROWS) : null,   // lobby only: when each wall cell was drawn
+    fadeTimer: 0,
     time: 0,                          // seconds since the round's game started
     players: {},
     bullets: [],
@@ -298,6 +306,7 @@ export function step(game, inputs, dt) {
 
   stepBullets(game, dt);
   stepMeteors(game, dt);
+  if (game.lobby) stepLobby(game, dt);
   for (const key of ['blackout', 'gravity', 'mirror']) {
     const e = game[key];
     if (e && (e.t += dt) >= e.dur) game[key] = null;
@@ -407,6 +416,23 @@ function eraseWalls(game) {
   game.wallLog?.push(-1, 0);          // "-1" = clear everything (see netsync)
   for (const p of Object.values(game.players)) p.ink = game.rules.penCapacity;
   emit(game, 'erase', {});
+}
+
+// Lobby: pens never run dry, and walls older than LOBBY_WALL_LIFE disappear (the renderer fades
+// them out beforehand). Checked a few times a second, which is plenty.
+function stepLobby(game, dt) {
+  for (const p of Object.values(game.players)) p.ink = game.rules.penCapacity;
+  if ((game.fadeTimer += dt) < 0.25) return;
+  game.fadeTimer = 0;
+  let changed = false;
+  for (let i = 0; i < game.walls.length; i++) {
+    if (!game.walls[i] || game.time - game.wallTimes[i] < LOBBY_WALL_LIFE) continue;
+    game.walls[i] = 0;
+    game.wallTimes[i] = 0;
+    game.wallLog?.push(i, 0);
+    changed = true;
+  }
+  if (changed) game.wallsVersion++;
 }
 
 // PAINT BOMB: splats of the picker's color all over the map, free of charge.
@@ -755,6 +781,12 @@ function explode(game, x, y, direct, { damage = EXPLOSION_DAMAGE, radius = EXPLO
 // eliminating another player heals you.
 export function hurtPlayer(game, p, amount = 1, by = null) {
   if (!p.alive) return;
+  if (game.lobby) {
+    // Lobby: hits flash and make noise, but nobody gets hurt.
+    p.hitCount += 1;
+    emit(game, 'hit', { x: p.x, y: p.y });
+    return;
+  }
   p.hp -= amount;
   p.hitCount += 1;
   if (p.hp <= 0) {
@@ -871,6 +903,7 @@ function paintDot(game, painter, x, y) {
     if (keepClear.some((k) => circleOverlapsCell(k.x, k.y, k.r + PAINT_CLEARANCE, c, r))) return;
     game.walls[idx] = painter.slot;
     game.wallLog?.push(idx, painter.slot);
+    if (game.wallTimes) game.wallTimes[idx] = game.time;
     painter.ink -= 1;
     changed = true;
   });

@@ -2,6 +2,7 @@ import {
   ARENA, COLS, ROWS, BULLET_RADIUS, MAG_SIZE, RELOAD_TIME,
   POWERUP_RADIUS, FAT_DURATION, SMALL_DURATION, SHIELD_RADIUS, SHIELD_HITS,
   playerRadius, brushRadius, shieldPositions, mirrorScale, GHOST_DURATION, SPEED_DURATION,
+  LOBBY_WALL_LIFE, LOBBY_WALL_FADE,
 } from './game.js';
 import {
   updateFx, shakeOffset, drawBackgroundFx, drawWallFx, drawMeteors, drawSmoke, drawTopFx,
@@ -9,7 +10,7 @@ import {
 } from './fx.js';
 import { powerupIcon } from './icons.js';
 import { createBackground, BG_W, BG_H } from './background.js';
-import { PX, VIEW_W, VIEW_H, snap, disc, ring, drawSprite, rect, drawText, hexToRgb } from './pixel.js';
+import { PX, VIEW_W, VIEW_H, snap, disc, ring, drawSprite, rect, drawText, hexToRgb, textSprite } from './pixel.js';
 
 const ORPHAN_RGB = [107, 114, 128];
 
@@ -59,6 +60,7 @@ const wallCtx = wallCanvas.getContext('2d');
 const wallPixels = wallCtx.createImageData(COLS, ROWS);
 let wallsDrawnVersion = -1;
 let wallCount = 0;
+const FADE_STEPS = [50, 105, 165, 220];   // lobby wall opacity steps on the way out
 
 // Walls get moving white highlight bands: the walls are copied to a second small canvas each frame
 // and a sweeping gradient is painted only where wall pixels are ('source-atop'). Cheap — it's 320x180.
@@ -114,7 +116,8 @@ let lastGame = null;
 
 let lastRender = performance.now();
 
-export function render(ctx, game, localId, input) {
+// options: hud (ammo etc.), pattern (opacity of the spinning-cursor pattern, used in the lobby).
+export function render(ctx, game, localId, input, { hud = true, pattern = 0 } = {}) {
   const now = performance.now();
   const dt = Math.min(0.1, (now - lastRender) / 1000);
   lastRender = now;
@@ -135,6 +138,7 @@ export function render(ctx, game, localId, input) {
 
   updateFx(game, now, wallPixels, localId);   // before drawWalls: the eraser effect needs the old walls
   drawBackground(ctx, game.bgSeed);
+  if (pattern) drawCursorPattern(ctx, now / 1000, pattern);
   drawHitFlash(ctx, game);
   drawBackgroundFx(ctx, now);
   drawWalls(ctx, game);
@@ -185,7 +189,7 @@ export function render(ctx, game, localId, input) {
     game.mirror?.axis === 'x' ? [ARENA.w / 2 + (x - ARENA.w / 2) * flip, y]
       : game.mirror ? [x, ARENA.h / 2 + (y - ARENA.h / 2) * flip] : [x, y];
   drawFloats(ctx, game, now, localId, toScreen);
-  if (me) drawHud(ctx, me);
+  if (me && hud) drawHud(ctx, me);
   drawBanners(ctx, now);
 }
 
@@ -237,8 +241,9 @@ function drawHitFlash(ctx, game) {
 }
 
 function drawWalls(ctx, game) {
-  if (game.wallsVersion !== wallsDrawnVersion) {
+  if (game.wallsVersion !== wallsDrawnVersion || game.wallTimes) {
     // Each cell is painted in the color of the player who drew it (gray if they've left).
+    // In the lobby, cells fade out in a few hard steps as they near the end of their life.
     const colors = {};
     for (const p of Object.values(game.players)) colors[p.slot] = hexToRgb(p.color);
     const d = wallPixels.data;
@@ -250,7 +255,12 @@ function drawWalls(ctx, game) {
       d[o] = rgb[0];
       d[o + 1] = rgb[1];
       d[o + 2] = rgb[2];
-      d[o + 3] = slot ? 255 : 0;
+      let alpha = slot ? 255 : 0;
+      if (slot && game.wallTimes) {
+        const left = LOBBY_WALL_LIFE - (game.time - game.wallTimes[i]);
+        if (left < LOBBY_WALL_FADE) alpha = FADE_STEPS[Math.max(0, Math.min(3, Math.floor((left / LOBBY_WALL_FADE) * 4)))];
+      }
+      d[o + 3] = alpha;
       if (slot) count++;
     }
     wallCtx.putImageData(wallPixels, 0, 0);
@@ -280,6 +290,20 @@ function drawPowerup(ctx, u) {
   const icon = powerupIcon(u.type);
   if (icon) drawSprite(ctx, icon, u.x, u.y);
   else drawText(ctx, s.label, u.x + PX, u.y + PX, { color: '#ffffff', outline: s.outline, align: 'center', valign: 'middle' });
+}
+
+// A powerup as it looks on the map (disc + icon or label), as a small canvas at 1 pixel per game
+// pixel — used by the How to Play page.
+export function powerupBadge(type) {
+  const s = POWERUP_STYLE[type];
+  const r = Math.round(POWERUP_RADIUS / PX);
+  const c = document.createElement('canvas');
+  c.width = c.height = r * 2 + 1;
+  const g = c.getContext('2d');
+  g.drawImage(disc(r, s.fill, s.outline, 2), 0, 0);
+  const icon = powerupIcon(type) || textSprite(s.label, 8, '#ffffff', s.outline);
+  g.drawImage(icon, Math.floor((c.width - icon.width) / 2) + (powerupIcon(type) ? 0 : 1), Math.floor((c.height - icon.height) / 2) + (powerupIcon(type) ? 0 : 1));
+  return c;
 }
 
 // Rocket: white nose, orange body, pointing where it flies.
@@ -516,13 +540,13 @@ const SPIN_FRAMES = 60, SPIN_COLS = 10, SPIN_SIZE = 32;
 const SPIN_SPACING = 100;             // arena units between cursors
 const SPIN_FPS = 24;
 
-function drawCursorPattern(ctx, t) {
+function drawCursorPattern(ctx, t, opacity = 0.5) {
   if (!spinSheet.complete || !spinSheet.naturalWidth) return;
   const S = SPIN_SPACING, size = SPIN_SIZE * PX;
   // The whole grid drifts diagonally; each cursor is a few frames behind its neighbor, so the
   // spinning ripples across the screen in waves.
   const ox = snap((t * 18) % S), oy = snap((t * 10) % S);
-  ctx.globalAlpha = 0.5;
+  ctx.globalAlpha = opacity;
   for (let row = -1; row * S < ARENA.h + S; row++) {
     for (let col = -1; col * S < ARENA.w + S; col++) {
       const x = col * S + ox + (row % 2 ? S / 2 : 0), y = row * S + oy;

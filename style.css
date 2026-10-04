@@ -396,3 +396,228 @@ body:not(.in-match) #hint {
   0%, 100% { box-shadow: inset 0 calc(var(--px) * -2) 0 #0b0f19, 0 0 0 var(--px) #000; }
   50% { box-shadow: inset 0 calc(var(--px) * -2) 0 #0b0f19, 0 0 0 var(--px) #000, 0 0 calc(var(--px) * 6) #ff5ea8; }
 }
+
+/* ---- title: host / join grid ---- */
+
+.start-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: calc(var(--px) * 3) calc(var(--px) * 6);
+  align-items: end;
+  margin: calc(var(--px) * 6) 0 calc(var(--px) * 4);
+}
+
+.start-grid input {
+  width: auto;
+  margin: 0;
+}
+
+.start-grid .big {
+  margin: 0;
+  width: 100%;
+}
+
+.panel button.big.green {
+  background: #15803d;
+  animation: none;
+}
+
+.panel button.big.green:hover:not(:disabled) {
+  background: #16a34a;
+}
+
+.panel button.howto {
+  background: #1d4ed8;
+  padding: calc(var(--px) * 2) calc(var(--px) * 10);
+}
+
+.panel button.howto:hover:not(:disabled) {
+  background: #2563eb;
+}
+
+/* ---- lobby: one column on the left, a playground on the right ---- */
+
+.lobby-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+}
+
+.lobby-screen .panel.lobby {
+  width: calc(var(--px) * 270);
+  max-height: calc(var(--px) * 340);
+  margin-left: calc(var(--px) * 10);
+  padding: calc(var(--px) * 8) calc(var(--px) * 10);
+  overflow-y: auto;
+  scrollbar-width: none;
+  background: rgba(8, 8, 14, 0.8);
+}
+
+.lobby-screen .lobby h3 {
+  margin: calc(var(--px) * 5) 0 calc(var(--px) * 2);
+}
+
+.lobby-screen .lobby .small {
+  margin: calc(var(--px) * 2) 0 0;
+}
+
+.lobby-screen .lobby input {
+  margin: 0;
+  width: calc(var(--px) * 120);
+}
+
+.lobby-screen .settings .setting {
+  height: calc(var(--px) * 13);
+}
+
+.lobby-screen .status {
+  min-height: 1.5em;
+  margin: calc(var(--px) * 4) 0 0 !important;
+}
+
+.lobby-screen .lobby-foot {
+  margin-top: calc(var(--px) * 3);
+}
+
+.playground-hint {
+  flex: 1;
+  align-self: flex-start;
+  margin: calc(var(--px) * 14) 0 0 !important;
+  text-align: center;
+  color: #fff;
+  text-shadow: var(--px) var(--px) 0 #000, calc(var(--px) * 2) calc(var(--px) * 2) 0 #000;
+  animation: hint-bob 2.4s ease-in-out infinite;
+}
+
+.playground-hint span {
+  color: #fde047;
+}
+
+@keyframes hint-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(calc(var(--px) * 3)); }
+}
+
+/* ---- how to play: instructions on the right, practice arena on the left ---- */
+
+.howto-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+
+.howto-screen .panel.howto {
+  width: calc(var(--px) * 300);
+  height: calc(var(--px) * 340);
+  margin-right: calc(var(--px) * 10);
+  padding: calc(var(--px) * 8) calc(var(--px) * 10);
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  background: rgba(8, 8, 14, 0.88);
+}
+
+.howto h2 {
+  text-align: center;
+  margin-bottom: calc(var(--px) * 4) !important;
+}
+
+.howto-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: calc(var(--px) * 4);
+  scrollbar-color: #4b5563 transparent;
+}
+
+.howto .rules, .howto .pu-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.howto .rules li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: calc(var(--px) * 2);
+  margin-bottom: calc(var(--px) * 5);
+}
+
+.howto .rules li > span {
+  flex: 1 1 calc(var(--px) * 150);
+  color: #e5e7eb;
+}
+
+.howto kbd {
+  font: inherit;
+  color: #000;
+  background: #e5e7eb;
+  padding: 0 calc(var(--px) * 2);
+  box-shadow: inset 0 calc(var(--px) * -1) 0 #9ca3af, 0 0 0 var(--px) #000;
+}
+
+.howto .inkbar {
+  display: inline-block;
+  width: calc(var(--px) * 3);
+  height: calc(var(--px) * 14);
+  background: linear-gradient(to top, #60a5fa 60%, #000 60%);
+  box-shadow: 0 0 0 var(--px) #000;
+  margin: 0 calc(var(--px) * 6);
+}
+
+.howto .crown {
+  font-style: normal;
+  color: #fde047;
+  width: calc(var(--px) * 14);
+  text-align: center;
+}
+
+.howto .pu-list li {
+  display: grid;
+  grid-template-columns: calc(var(--px) * 24) 1fr;
+  grid-template-rows: auto auto;
+  column-gap: calc(var(--px) * 4);
+  align-items: center;
+  margin-bottom: calc(var(--px) * 3);
+}
+
+.howto .pu-list .badge {
+  grid-row: span 2;
+}
+
+.howto .pu-list canvas {
+  display: block;
+  width: calc(var(--px) * 21);
+  height: calc(var(--px) * 21);
+  image-rendering: pixelated;
+}
+
+.howto .pu-list b {
+  font-weight: normal;
+  color: #fde047;
+}
+
+.howto .pu-list li > span:last-child {
+  color: #d1d5db;
+}
+
+.howto .big {
+  margin: calc(var(--px) * 6) auto 0;
+  animation: none;
+}
+
+.practice-hint {
+  position: absolute;
+  top: calc(var(--px) * 10);
+  left: calc(var(--px) * 10);
+  right: calc(var(--px) * 320);
+  text-align: center;
+  color: #fff;
+  text-shadow: var(--px) var(--px) 0 #000, calc(var(--px) * 2) calc(var(--px) * 2) 0 #000;
+  animation: hint-bob 2.4s ease-in-out infinite;
+}

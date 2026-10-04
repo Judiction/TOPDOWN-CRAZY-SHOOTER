@@ -4,6 +4,7 @@
 import { COLORS, SETTING_DEFS, MAX_PLAYERS, NAME_MAX } from './settings.js';
 import { canStart } from './room.js';
 import { mountLogo } from './logo.js';
+import { powerupBadge } from './render.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -13,7 +14,7 @@ function el(html) {
   return t.content.firstElementChild;
 }
 
-// handlers: onHost(name), onJoin(name, code), onAction(action), onStart(), onLeave(), onCopy(),
+// handlers: onHost(name), onJoin(name, code), onHowTo(), onAction(action), onStart(), onLeave(), onCopy(),
 //           onPlayAgain(), onMenu(), onResume(), onEndMatch(), onClick()
 export function createUI(root, handlers) {
   let screen = null;
@@ -23,7 +24,9 @@ export function createUI(root, handlers) {
     screen = name;
     // Any button click gets a little UI blip.
     node.addEventListener('click', (e) => {
-      if (e.target.closest('button:not(:disabled)')) handlers.onClick?.();
+      const b = e.target.closest('button');
+      if (b && !b.disabled) handlers.onClick?.();
+      b?.blur();
     });
   }
 
@@ -41,11 +44,13 @@ export function createUI(root, handlers) {
         <p class="tagline">DRAW WALLS <i>·</i> SHOOT CURSORS <i>·</i> LAST ONE CLICKING WINS</p>
         <div class="panel title">
           <label class="field">YOUR NAME <input id="ui-name" maxlength="${NAME_MAX}" spellcheck="false" autocomplete="off"></label>
-          <button data-act="host" class="big">HOST GAME</button>
-          <div class="row">
-            <input id="ui-code" maxlength="8" placeholder="ROOM CODE" spellcheck="false" autocomplete="off">
-            <button data-act="join">JOIN</button>
+          <div class="start-grid">
+            <span></span>
+            <input id="ui-code" maxlength="8" placeholder="ENTER ROOM CODE" spellcheck="false" autocomplete="off">
+            <button data-act="host" class="big">HOST GAME</button>
+            <button data-act="join" class="big green">JOIN GAME</button>
           </div>
+          <button data-act="howto" class="howto">HOW TO PLAY</button>
           <p class="msg" id="ui-msg"></p>
         </div>
         <p class="help">WASD MOVE · MOUSE AIM · CLICK SHOOT · R RELOAD · SPACE + CLICK DRAW · M MUTE · ESC MENU</p>
@@ -60,6 +65,7 @@ export function createUI(root, handlers) {
       const act = e.target.closest('[data-act]')?.dataset.act;
       if (act === 'host') handlers.onHost(nameInput.value);
       if (act === 'join') handlers.onJoin(nameInput.value, codeInput.value);
+      if (act === 'howto') handlers.onHowTo();
     });
     nameInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') handlers.onHost(nameInput.value);
@@ -80,33 +86,35 @@ export function createUI(root, handlers) {
 
   function showLobby(room, localId) {
     const n = el(`
-      <div class="panel lobby">
-        <div class="lobby-head">
-          <h2>LOBBY</h2>
-          <div class="code">ROOM <b id="ui-room"></b> <button data-act="copy" id="ui-copy">COPY INVITE LINK</button></div>
-        </div>
-        <div class="lobby-cols">
-          <section>
-            <h3>PLAYERS <span id="ui-count"></span></h3>
-            <ul id="ui-players" class="players"></ul>
-            <button data-act="addBot" id="ui-addbot" class="small">+ ADD BOT</button>
-            <h3>YOUR NAME</h3>
-            <input id="ui-lname" maxlength="${NAME_MAX}" spellcheck="false" autocomplete="off">
-            <h3>YOUR COLOR</h3>
-            <div id="ui-colors" class="colors">
-              ${COLORS.map((c) => `<button class="swatch" data-color="${c}" style="--c:${c}" title="${c}"></button>`).join('')}
+      <div class="lobby-screen">
+        <div class="panel lobby">
+          <div class="lobby-head">
+            <h2>LOBBY</h2>
+            <div class="code">ROOM <b id="ui-room"></b></div>
+          </div>
+          <button data-act="copy" id="ui-copy" class="small">COPY INVITE LINK</button>
+          <h3>PLAYERS <span id="ui-count"></span></h3>
+          <ul id="ui-players" class="players"></ul>
+          <button data-act="addBot" id="ui-addbot" class="small">+ ADD BOT</button>
+          <div class="me-row">
+            <div>
+              <h3>YOUR NAME</h3>
+              <input id="ui-lname" maxlength="${NAME_MAX}" spellcheck="false" autocomplete="off">
             </div>
-          </section>
-          <section>
-            <h3>SETTINGS</h3>
-            <div id="ui-settings" class="settings"></div>
-          </section>
+          </div>
+          <h3>YOUR COLOR</h3>
+          <div id="ui-colors" class="colors">
+            ${COLORS.map((c) => `<button class="swatch" data-color="${c}" style="--c:${c}" title="${c}"></button>`).join('')}
+          </div>
+          <h3>SETTINGS</h3>
+          <div id="ui-settings" class="settings"></div>
+          <p id="ui-status" class="status"></p>
+          <div class="lobby-foot">
+            <button data-act="leave">LEAVE</button>
+            <button data-act="start" id="ui-start" class="big">START</button>
+          </div>
         </div>
-        <div class="lobby-foot">
-          <button data-act="leave">LEAVE</button>
-          <span id="ui-status" class="status"></span>
-          <button data-act="start" id="ui-start" class="big">START</button>
-        </div>
+        <p class="playground-hint">MOVE, SHOOT AND DRAW WHILE YOU WAIT!<br><span>NOBODY GETS HURT IN HERE</span></p>
       </div>`);
     n.addEventListener('click', (e) => {
       const b = e.target.closest('button');
@@ -183,6 +191,78 @@ export function createUI(root, handlers) {
         : '';
   }
 
+  // ---- how to play: instructions on the right, a private practice arena behind ----
+
+  const HOWTO_POWERUPS = [
+    ['PLAYER BOOSTS', [
+      ['fat', 'FAT WALLS', 'Draw walls twice as thick'],
+      ['ricochet', 'RICOCHET', 'Shots bounce off walls (and can hit you!)'],
+      ['small', 'GET SMALL', 'Half size, harder to hit'],
+      ['defense', 'DEFENSE BALLS', 'Orbiting spheres block bullets'],
+      ['ghost', 'GHOST', 'Invisible, walk through walls'],
+      ['speed', 'SPEED BOOTS', 'Move a lot faster'],
+      ['inkrush', 'INK RUSH', 'Refill your pen'],
+      ['medkit', 'MEDKIT', 'Heal +5 HP'],
+    ]],
+    ['WEAPONS', [
+      ['shotgun', 'SHOTGUN', '6 pellets per shot'],
+      ['uzi', 'UZI', 'Fast, short-range spray'],
+      ['rocket', 'ROCKETS', 'Homing, they explode'],
+      ['laser', 'LASER', 'One huge beam through everything'],
+      ['sniper', 'SNIPER', 'Shoots through walls'],
+      ['flamer', 'FLAMETHROWER', 'Short fire jet, melts walls'],
+      ['grenade', 'GRENADES', 'Bounce, then boom'],
+    ]],
+    ['MAP EVENTS (HIT EVERYONE)', [
+      ['eraser', 'ERASER', 'All walls vanish, pens refill'],
+      ['meteor', 'METEORS', 'Get out of the flashing circles'],
+      ['blackout', 'BLACKOUT', 'Lights out'],
+      ['gravity', 'GRAVITY WELL', 'Everything gets sucked in'],
+      ['paintbomb', 'PAINT BOMB', 'Free walls splat everywhere'],
+      ['mirror', 'MIRROR WORLD', 'The screen flips'],
+      ['inkstorm', 'INK STORM', 'Walls crumble'],
+    ]],
+  ];
+
+  function showHowTo() {
+    const k = (key) => `<kbd>${key}</kbd>`;
+    const n = el(`
+      <div class="howto-screen">
+        <p class="practice-hint">PRACTICE HERE! TRY MOVING, SHOOTING AND DRAWING</p>
+        <div class="panel howto">
+          <h2>HOW TO PLAY</h2>
+          <div class="howto-scroll">
+            <ul class="rules">
+              <li>${k('W')}${k('A')}${k('S')}${k('D')}<span>YOU ARE A CURSOR. MOVE AROUND.</span></li>
+              <li>${k('MOUSE')}<span>AIM. HOLD ${k('CLICK')} TO SHOOT. ${k('R')} RELOADS.</span></li>
+              <li>${k('SPACE')}+${k('CLICK')}<span>DRAW WALLS. THEY BLOCK BULLETS AND PLAYERS.</span></li>
+              <li><i class="inkbar"></i><span>DRAWING USES INK (THE BAR NEXT TO YOU). SHOOT WALLS TO GET INK BACK: IT ALWAYS RETURNS TO WHOEVER DREW THEM.</span></li>
+              <li><i class="crown">★</i><span>LAST CURSOR STANDING WINS THE ROUND. KILLS HEAL +5 HP. DYING CURSORS EXPLODE!</span></li>
+              <li><i class="crown">◆</i><span>WALK OVER POWERUPS TO GRAB THEM:</span></li>
+            </ul>
+            ${HOWTO_POWERUPS.map(([title, list]) => `
+              <h3>${title}</h3>
+              <ul class="pu-list">
+                ${list.map(([type, name, desc]) => `<li><span class="badge" data-type="${type}"></span><b>${name}</b><span>${esc(desc.toUpperCase())}</span></li>`).join('')}
+              </ul>`).join('')}
+          </div>
+          <button data-act="back" class="big">BACK TO MENU</button>
+        </div>
+      </div>`);
+    for (const slot of n.querySelectorAll('.badge')) {
+      const badge = powerupBadge(slot.dataset.type);
+      const c = document.createElement('canvas');
+      c.width = badge.width;
+      c.height = badge.height;
+      c.getContext('2d').drawImage(badge, 0, 0);
+      slot.appendChild(c);
+    }
+    n.addEventListener('click', (e) => {
+      if (e.target.closest('[data-act]')?.dataset.act === 'back') handlers.onBack();
+    });
+    show(n, 'howto');
+  }
+
   // ---- in-match menu (ESC) and winner screen ----
 
   function showPause(isHost) {
@@ -232,5 +312,5 @@ export function createUI(root, handlers) {
     setTimeout(() => lastRoom && updateLobby(lastRoom, lastLocalId), 1500);
   }
 
-  return { showTitle, setMessage, flashStatus, showLobby, updateLobby, showPause, showGameOver, hide, get screen() { return screen; } };
+  return { showTitle, showHowTo, setMessage, flashStatus, showLobby, updateLobby, showPause, showGameOver, hide, get screen() { return screen; } };
 }

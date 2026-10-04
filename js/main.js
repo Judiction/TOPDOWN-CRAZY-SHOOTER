@@ -1,16 +1,18 @@
 // App flow: title → lobby → match (rounds) → winner screen → back to lobby or title.
+// Plus: How to Play (a private practice arena) and a live lobby playground.
 //
 // Networking model (host-authoritative, peer-to-peer via PeerJS):
-//   - The host's browser owns the room and runs the real match (plus any bots).
+//   - The host's browser owns the room and runs the real simulation (plus any bots).
 //   - Clients send their controls every tick and receive snapshots ~20 times a second.
 //   - Clients predict their own movement so it feels instant; everyone else is smoothed.
-// If the matchmaking server can't be reached, hosting still works offline with bots.
+// The same machinery runs the lobby playground (a harmless game everyone can mess around in while
+// waiting) and then the match. If matchmaking is unreachable, hosting still works offline with bots.
 
-import { ARENA, emptyInput, newBackgroundSeed, applyMovement, mirrorScale } from './game.js';
+import { ARENA, emptyInput, newBackgroundSeed, applyMovement, mirrorScale, createGame, addPlayer, step, PEN_CAPACITY } from './game.js';
 import { createMatch, stepMatch, dropPlayer } from './match.js';
 import { createBrain, botInput } from './bots.js';
 import { createRoom, applyAction, canStart, addMember, removeMember } from './room.js';
-import { cleanName, MAX_PLAYERS } from './settings.js';
+import { cleanName, MAX_PLAYERS, COLORS } from './settings.js';
 import { initInput, readInput, isTyping } from './input.js';
 import { initCanvas, render, renderBackdrop, renderMatchHud } from './render.js';
 import { FONT, clearSpriteCache } from './pixel.js';
@@ -27,12 +29,14 @@ document.fonts.ready.then(clearSpriteCache);
 
 const TICK = 1 / 60;
 const HOST_ID = 'host';               // the host is always 'host'; clients use their PeerJS id
+const PRACTICE_ID = 'you';
 const SNAPSHOT_EVERY = 3;             // ticks between snapshots (60 / 3 = 20 per second)
 const FULL_SNAPSHOT_EVERY = 180;      // ticks between full resyncs (every 3 s)
 const PING_MS = 2000;
 const TIMEOUT_MS = 10000;             // no message for this long = connection is gone
 const MAX_QUEUED_INPUTS = 6;
 const WINNER_SCREEN_DELAY = 1500;     // ms between the final kill and the winner screen
+const LOBBY_PATTERN = 0.22;           // spinning-cursor pattern opacity behind the lobby playground
 
 const canvas = document.getElementById('game');
 const ctx = initCanvas(canvas);
@@ -55,11 +59,12 @@ function savePrefs() {
 }
 
 const app = {
-  screen: 'title',                    // 'title' | 'lobby' | 'match'
+  screen: 'title',                    // 'title' | 'howto' | 'lobby' | 'match'
   role: null,                         // 'host' | 'client'
   myId: HOST_ID,
   room: null,
-  match: null,                        // host: the real match. client: { match, game } rebuilt from snapshots
+  match: null,                        // host: the real match
+  practice: null,                     // How to Play: { game }
   menuOpen: false,
   winnerShownAt: null,
   lastInput: emptyInput(),
@@ -74,10 +79,12 @@ const host = {
   lastInputs: new Map(),
   acks: {},                           // client id -> seq of the last input simulated
   brains: {},                         // bot id -> AI state
+  lobby: null,                        // the lobby playground, shaped like a match for the snapshot code
   ticks: 0,
   sentEventId: 0,
   wallOps: [],
   snapGame: null,
+  forceFull: false,                   // next snapshot must be full (someone joined, changed color...)
 };
 
 // Client-side networking state.
@@ -87,16 +94,19 @@ const client = {
   lastHeard: 0,
   seq: 0,
   pending: [],                        // inputs sent but not yet confirmed by the host
-  view: { match: null, game: null },
+  view: { match: null, game: null },  // the match, rebuilt from snapshots
+  lobby: { match: null, game: null }, // the lobby playground, rebuilt from snapshots
 };
 
-// What plays behind the menus: just background art + music.
+// What plays behind the title: just background art + music.
 const menuScene = { events: [], players: {}, bgSeed: newBackgroundSeed() };
 
 const ui = createUI(document.getElementById('ui'), {
   onClick: playUi,
   onHost: startHosting,
   onJoin: joinGame,
+  onHowTo: showHowTo,
+  onBack: () => goTitle(),
   onAction(action) {
     if (app.role === 'client') return send(client.conn, { t: 'act', action });
     if (!applyAction(app.room, app.myId, action)) return;
@@ -140,17 +150,32 @@ function goTitle(message = '') {
   app.role = null;
   app.room = null;
   app.match = null;
+  app.practice = null;
   app.menuOpen = false;
+  host.lobby = null;
   document.body.classList.remove('in-match');
   const code = cleanCode(new URLSearchParams(location.search).get('room'));
   ui.showTitle({ name: prefs.name || '', code, message });
 }
 
+// How to Play: instructions + a private arena with just your cursor (no enemies, no powerups).
+function showHowTo() {
+  const game = createGame({ powerupInterval: 0 });
+  game.bgSeed = menuScene.bgSeed;
+  addPlayer(game, PRACTICE_ID, { name: prefs.name || 'YOU', color: COLORS.includes(prefs.color) ? prefs.color : '#60a5fa', x: 400, y: 360 });
+  app.practice = { game };
+  app.screen = 'howto';
+  ui.showHowTo();
+}
+
 function showLobby() {
+  if (app.role === 'host') startLobbyPlayground();   // (before dropping the match: it continues its event ids)
   app.screen = 'lobby';
   app.match = null;
   app.menuOpen = false;
   document.body.classList.remove('in-match');
+  client.lobby = { match: null, game: null };
+  client.pending = [];
   ui.showLobby(app.room, app.myId);
 }
 
@@ -173,8 +198,10 @@ function closeMenu() {
 }
 
 window.addEventListener('keydown', (e) => {
+  if (e.code !== 'Escape' || isTyping(e)) return;
+  if (app.screen === 'howto') return goTitle();
   const phase = app.role === 'host' ? app.match?.phase : client.view.match?.phase;
-  if (e.code !== 'Escape' || isTyping(e) || app.screen !== 'match' || phase === 'gameOver') return;
+  if (app.screen !== 'match' || phase === 'gameOver') return;
   if (app.menuOpen) closeMenu();
   else openMenu();
 });
@@ -264,21 +291,65 @@ function dropClient(id) {
   roomChanged();
 }
 
-// Share the lobby with everyone and refresh our own lobby screen.
+// Share the lobby with everyone, keep the playground's cursors in sync with it, refresh our screen.
 function roomChanged() {
   if (!app.room) return;
   for (const conn of host.conns.values()) send(conn, { t: 'room', room: app.room });
+  if (host.lobby) syncLobbyPlayers();
   if (app.screen === 'lobby') ui.updateLobby(app.room, app.myId);
+}
+
+// ---- lobby playground (host) ----
+
+function startLobbyPlayground() {
+  const game = createGame({ penCapacity: PEN_CAPACITY, powerupInterval: 0 }, {
+    lobby: true,
+    firstEventId: (host.lobby?.game.nextEventId ?? app.match?.game.nextEventId ?? 0) + 1,
+  });
+  game.bgSeed = menuScene.bgSeed;
+  host.lobby = {
+    round: -1, phase: 'lobby', timer: 0, goTimer: 0, suddenDeath: false, roundTime: 0,
+    roundWinner: null, winner: null, scores: {}, settings: app.room.settings, roster: [], game,
+  };
+  host.ticks = 0;
+  host.sentEventId = game.nextEventId - 1;
+  host.wallOps = [];
+  host.snapGame = null;
+  for (const q of host.queues.values()) q.length = 0;
+  syncLobbyPlayers();
+}
+
+// Real players (not bots) get a cursor in the playground, in the color they've picked.
+function syncLobbyPlayers() {
+  const lobby = host.lobby, game = lobby.game;
+  const humans = app.room.players.filter((p) => !p.isBot);
+  for (const id of Object.keys(game.players)) if (!humans.some((p) => p.id === id)) delete game.players[id];
+  for (const m of humans) {
+    let p = game.players[m.id];
+    if (!p) {
+      // Spawn on the open right-hand side of the screen (the lobby panel covers the left).
+      const x = 700 + Math.random() * 480, y = 120 + Math.random() * 480;
+      p = addPlayer(game, m.id, { name: m.name, color: m.color, x, y });
+    }
+    if (p.color !== m.color) game.wallsVersion++;   // repaint their walls in the new color
+    p.name = m.name;
+    p.color = m.color;
+  }
+  lobby.roster = humans.map(({ id, name, color }) => ({ id, name, color }));
+  lobby.settings = app.room.settings;
+  host.forceFull = true;
 }
 
 function hostStartMatch() {
   const room = app.room;
   if (!canStart(room)) return;
   room.inMatch = true;
-  app.match = createMatch(room.settings, room.players);
+  const firstEventId = (host.lobby?.game.nextEventId ?? 0) + 1;
+  host.lobby = null;                  // the playground is over
+  app.match = createMatch(room.settings, room.players, { firstEventId });
   host.brains = Object.fromEntries(room.players.filter((p) => p.isBot).map((p) => [p.id, createBrain()]));
   host.ticks = 0;
-  host.sentEventId = 0;
+  host.sentEventId = firstEventId - 1;
   host.wallOps = [];
   host.snapGame = null;
   for (const q of host.queues.values()) q.length = 0;
@@ -294,14 +365,16 @@ function hostBackToLobby() {
   app.room.inMatch = false;
   for (const p of app.room.players) p.waiting = false;
   for (const conn of host.conns.values()) send(conn, { t: 'lobby' });
-  roomChanged();
   showLobby();
+  roomChanged();
 }
 
+// One host tick of whatever is running: the match, or the lobby playground.
 function hostTick(input) {
-  const m = app.match;
+  const sim = app.screen === 'match' ? app.match : host.lobby;
+  if (!sim) return;
   const inputs = { [HOST_ID]: input };
-  for (const id of Object.keys(host.brains)) inputs[id] = botInput(m.game, id, host.brains[id], TICK);
+  if (sim === app.match) for (const id of Object.keys(host.brains)) inputs[id] = botInput(sim.game, id, host.brains[id], TICK);
   for (const [id, q] of host.queues) {
     const next = q.shift();
     if (next) {
@@ -311,32 +384,35 @@ function hostTick(input) {
     inputs[id] = host.lastInputs.get(id) || emptyInput();
   }
 
-  const before = m.game;
+  const before = sim.game;
   if (!before.wallLog) before.wallLog = [];
-  stepMatch(m, inputs, TICK);
+  if (sim === app.match) stepMatch(sim, inputs, TICK);
+  else step(sim.game, inputs, TICK);
   // Collect wall changes for the next snapshot (a new round starts from a full snapshot instead).
-  if (m.game === before) {
+  if (sim.game === before) {
     host.wallOps.push(...before.wallLog);
     before.wallLog.length = 0;
   }
 
   host.ticks++;
-  if (host.ticks % SNAPSHOT_EVERY === 0 && host.conns.size) sendSnapshot();
+  if (host.ticks % SNAPSHOT_EVERY === 0 && host.conns.size) sendSnapshot(sim);
 }
 
-function sendSnapshot() {
-  const m = app.match;
-  const g = m.game;
-  const full = g !== host.snapGame || host.ticks % FULL_SNAPSHOT_EVERY === 0;
+function sendSnapshot(sim) {
+  const g = sim.game;
+  const full = g !== host.snapGame || host.ticks % FULL_SNAPSHOT_EVERY === 0 || host.forceFull;
+  host.forceFull = false;
   if (g !== host.snapGame) {
     host.snapGame = g;
     host.wallOps = [];                // the full snapshot carries the walls
   }
   const events = g.events.filter((e) => e.id > host.sentEventId);
   if (events.length) host.sentEventId = events[events.length - 1].id;
-  const snap = encodeSnapshot(m, { full, events, wallOps: host.wallOps, acks: host.acks });
+  const snap = encodeSnapshot(sim, { full, events, wallOps: host.wallOps, acks: host.acks });
   host.wallOps = [];
-  for (const r of m.roster) send(host.conns.get(r.id), snap);
+  // The match goes to its players; the playground goes to everyone in the lobby.
+  const targets = sim === app.match ? sim.roster.map((r) => host.conns.get(r.id)) : [...host.conns.values()];
+  for (const conn of targets) send(conn, snap);
 }
 
 // ---------------------------------------------------------------- joining
@@ -384,7 +460,7 @@ function onHostMessage(msg) {
       showMatch();
       break;
     case 'snap':
-      if (app.screen === 'match') onSnapshot(msg);
+      onSnapshot(msg);
       break;
     case 'lobby':
       if (app.screen === 'match') showLobby();
@@ -399,8 +475,15 @@ function canMove(match) {
   return match && match.phase !== 'countdown';
 }
 
+// The view a client is currently looking at: the match or the lobby playground.
+function clientView() {
+  return app.screen === 'match' ? client.view : app.screen === 'lobby' ? client.lobby : null;
+}
+
 function onSnapshot(snap) {
-  const view = client.view;
+  // Lobby snapshots only matter in the lobby, match snapshots only in the match.
+  if ((snap.ph === 'lobby') !== (app.screen === 'lobby') || (app.screen !== 'lobby' && app.screen !== 'match')) return;
+  const view = clientView();
   const mine = applySnapshot(view, snap, app.myId);
   const me = view.game?.players[app.myId];
   if (!mine || !me) return;
@@ -414,12 +497,12 @@ function onSnapshot(snap) {
 function clientTick(input) {
   client.seq++;
   send(client.conn, { t: 'in', s: client.seq, i: encodeInput(input) });
-  const { game, match } = client.view;
-  const me = game?.players[app.myId];
+  const view = clientView();
+  const me = view?.game?.players[app.myId];
   if (!me) return;
   client.pending.push({ seq: client.seq, input });
   if (client.pending.length > 120) client.pending.shift();
-  if (me.alive && canMove(match)) applyMovement(game, me, input, TICK);
+  if (me.alive && canMove(view.match)) applyMovement(view.game, me, input, TICK);
 }
 
 // ---------------------------------------------------------------- connection housekeeping
@@ -467,8 +550,28 @@ setInterval(() => {
 let last = performance.now();
 let acc = 0;
 
-function inMatch() {
-  return app.screen === 'match' && (app.role === 'host' ? app.match : client.conn);
+// What (if anything) this browser should be simulating right now.
+function simMode() {
+  if (app.screen === 'howto') return app.practice && 'practice';
+  if (app.screen !== 'match' && app.screen !== 'lobby') return null;
+  if (app.role === 'host') return (app.screen === 'match' ? app.match : host.lobby) && 'host';
+  if (app.role === 'client') return client.conn && 'client';
+  return null;
+}
+
+// The game shown on screen (and its match-like wrapper for the HUD), or null for plain menus.
+function activeView() {
+  if (app.screen === 'howto') return app.practice && { match: null, game: app.practice.game };
+  if (app.role === 'host') {
+    if (app.screen === 'match') return app.match && { match: app.match, game: app.match.game };
+    if (app.screen === 'lobby') return host.lobby && { match: host.lobby, game: host.lobby.game };
+    return null;
+  }
+  return clientView();
+}
+
+function localId() {
+  return app.screen === 'howto' ? PRACTICE_ID : app.myId;
 }
 
 function currentInput() {
@@ -476,8 +579,7 @@ function currentInput() {
   const input = readInput();
   // Mirror World flips the picture, so flip the mouse too: you still aim where you point on screen.
   // (WASD keeps moving you in world directions — that's the disorienting part.)
-  const game = app.role === 'host' ? app.match?.game : client.view.game;
-  const m = game?.mirror;
+  const m = activeView()?.game?.mirror;
   if (m && mirrorScale(m) < 0) {
     if (m.axis === 'x') input.mx = ARENA.w - input.mx;
     else input.my = ARENA.h - input.my;
@@ -489,15 +591,17 @@ function pump() {
   const now = performance.now();
   acc += Math.min((now - last) / 1000, 0.25);
   last = now;
-  if (!inMatch()) {
+  const mode = simMode();
+  if (!mode) {
     acc = 0;
     return;
   }
   const input = currentInput();
   app.lastInput = input;
   while (acc >= TICK) {
-    if (app.role === 'host') hostTick(input);
-    else clientTick(input);
+    if (mode === 'host') hostTick(input);
+    else if (mode === 'client') clientTick(input);
+    else step(app.practice.game, { [PRACTICE_ID]: input }, TICK);
     acc -= TICK;
   }
 }
@@ -516,22 +620,24 @@ function frame(now) {
   lastFrame = now;
   pump();
 
-  const view = app.role === 'host' ? app.match && { match: app.match, game: app.match.game } : client.view;
-  if (app.screen === 'match' && view?.game) {
+  const view = activeView();
+  if (view?.game) {
     const { match, game } = view;
     const input = app.lastInput;
-    if (app.role === 'client') {
+    const id = localId();
+    if (app.role === 'client' && app.screen !== 'howto') {
       smoothRemotes(game, app.myId, dt);
-      if (match.phase === 'countdown') match.timer = Math.max(0, match.timer - dt);
-      match.goTimer = Math.max(0, (match.goTimer || 0) - dt);
+      if (match?.phase === 'countdown') match.timer = Math.max(0, match.timer - dt);
+      if (match) match.goTimer = Math.max(0, (match.goTimer || 0) - dt);
       const me = game.players[app.myId];
       if (me?.alive) me.aim = Math.atan2(input.my - me.y, input.mx - me.x);   // aim feels instant
     }
-    render(ctx, game, app.myId, input);
-    renderMatchHud(ctx, match, app.myId);
+    const inLobby = app.screen === 'lobby';
+    render(ctx, game, id, input, { hud: !inLobby, pattern: inLobby ? LOBBY_PATTERN : 0 });
+    if (app.screen === 'match') renderMatchHud(ctx, match, id);
     updateAudio(game);
 
-    if (match.phase === 'gameOver') {
+    if (app.screen === 'match' && match.phase === 'gameOver') {
       app.winnerShownAt ??= now + WINNER_SCREEN_DELAY;
       if (now >= app.winnerShownAt && ui.screen !== 'gameover') {
         app.menuOpen = false;

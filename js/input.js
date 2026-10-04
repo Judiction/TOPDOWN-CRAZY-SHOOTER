@@ -17,7 +17,8 @@ export function initInput(canvas) {
     mouse.down = false;
   });
 
-  canvas.addEventListener('mousemove', (e) => {
+  // Tracked on the whole window (not just the canvas) so aiming keeps working over menu panels.
+  window.addEventListener('mousemove', (e) => {
     // Convert screen pixels to arena coordinates (the canvas is scaled to fit the window).
     const rect = canvas.getBoundingClientRect();
     mouse.x = ((e.clientX - rect.left) / rect.width) * ARENA.w;
