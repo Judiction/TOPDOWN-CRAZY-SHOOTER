@@ -32,22 +32,6 @@ body {
   background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 3px);
 }
 
-body:not(.in-match) #hint {
-  display: none;
-}
-
-#hint {
-  position: fixed;
-  bottom: 8px;
-  left: 0;
-  right: 0;
-  text-align: center;
-  color: #d1d5db;
-  font: 16px Silkscreen, monospace;
-  text-shadow: 2px 0 #000, -2px 0 #000, 0 2px #000, 0 -2px #000;
-  pointer-events: none;
-}
-
 /* ---- menus ---- */
 /* --px = one game pixel in CSS px (set from JS), so menus scale with the canvas and stay pixel-sharp. */
 
@@ -603,7 +587,7 @@ body:not(.in-match) #hint {
 
 .howto .pu-list li {
   display: grid;
-  grid-template-columns: calc(var(--px) * 24) 1fr;
+  grid-template-columns: calc(var(--px) * 26) 1fr;
   grid-template-rows: auto auto;
   column-gap: calc(var(--px) * 4);
   align-items: center;
@@ -616,8 +600,8 @@ body:not(.in-match) #hint {
 
 .howto .pu-list canvas {
   display: block;
-  width: calc(var(--px) * 21);
-  height: calc(var(--px) * 21);
+  width: calc(var(--px) * 24);
+  height: calc(var(--px) * 24);
   image-rendering: pixelated;
 }
 

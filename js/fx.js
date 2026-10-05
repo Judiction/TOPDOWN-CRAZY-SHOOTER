@@ -89,6 +89,10 @@ export function updateFx(game, now, wallImage, localId) {
     if (e.id <= seenEventId) continue;
     seenEventId = e.id;
     if (e.type === 'shoot' && SHELLS[e.w] && !hidden(e.pid)) ejectShell(e, now);
+    if ((e.type === 'shoot' && e.w !== 'laser') || e.type === 'laser') {
+      const k = KICK[e.type === 'laser' ? 'laser' : e.w];
+      if (k && e.pid) kicks.set(e.pid, { start: now, ...k });
+    }
     if (BANNERS[e.type]) {
       const [text, color] = BANNERS[e.type];
       banners.length = 0;               // one announcement at a time: the newest replaces the old
@@ -164,6 +168,33 @@ function makeBolt() {
   }
   pts.push([x, end]);
   return pts;
+}
+
+// ---- weapon kick ----
+// The hand/weapon sprite jumps back along the aim line (and tips a little) when it fires, then
+// eases back. Purely visual; the real push-back is the recoil in game.js.
+const KICK = {
+  pistol: { back: 4, tip: 0.08, ms: 90 },
+  uzi: { back: 3, tip: 0.05, ms: 60 },
+  shotgun: { back: 8, tip: 0.22, ms: 180 },
+  rocket: { back: 8, tip: 0.16, ms: 200 },
+  sniper: { back: 10, tip: 0.25, ms: 220 },
+  laser: { back: 12, tip: 0.3, ms: 260 },
+  flamer: { back: 1.5, tip: 0.02, ms: 50 },
+};
+const kicks = new Map();                // player id -> { start, back, tip, ms }
+
+// How far back (px) and how much rotated (radians) player `pid`'s sprite is right now.
+export function weaponKick(pid, now) {
+  const k = kicks.get(pid);
+  if (!k) return null;
+  const t = (now - k.start) / k.ms;
+  if (t >= 1 || t < 0) {
+    kicks.delete(pid);
+    return null;
+  }
+  const e = (1 - t) * (1 - t);          // instant kick, smooth return
+  return { back: k.back * e, tip: k.tip * e };
 }
 
 // ---- spent shells ----

@@ -4,7 +4,7 @@
 // A "full" snapshot (first of each round, then every few seconds) also carries everything that rarely
 // changes: settings, roster, names/colors, and the entire wall grid, run-length encoded.
 
-import { createGame, addPlayer } from './game.js';
+import { createGame, addPlayer, clearPaintedWalls } from './game.js';
 
 const MAX_EVENTS = 128;
 const r1 = (v) => Math.round(v * 10) / 10;
@@ -76,7 +76,7 @@ export function encodeSnapshot(match, { full, events, wallOps, acks }) {
       p.id, ri(p.x), ri(p.y), r2(p.aim), p.hp, p.alive ? 1 : 0, p.ammo, r1(p.reloading), p.ink,
       r1(p.fat), r1(p.small), p.ricochet, p.shields, r2(p.orbit), p.hitCount,
       p.pen ? [ri(p.pen.x), ri(p.pen.y)] : 0, acks[p.id] ?? 0, p.weapon, p.weaponAmmo,
-      r1(p.ghost), r1(p.speed), r2(p.charging),
+      r1(p.ghost), r1(p.speed), r2(p.charging), ri(p.kvx || 0), ri(p.kvy || 0),
     ]),
     b: g.bullets.map((b) => [ri(b.x), ri(b.y), ri(b.vx), ri(b.vy), b.ricochet ? 1 : 0, BULLET_KINDS.indexOf(b.kind), ri(b.travel)]),
     m: g.meteors.map((m) => [m.id, ri(m.x), ri(m.y), m.r, r2(m.t), m.dur]),
@@ -94,6 +94,7 @@ export function encodeSnapshot(match, { full, events, wallOps, acks }) {
       bg: g.bgSeed,
       meta: Object.values(g.players).map((p) => [p.id, p.slot, p.name, p.color]),
       walls: encodeWalls(g.walls),
+      desk: g.desktop || null,
     };
   }
   return snap;
@@ -122,6 +123,7 @@ export function applySnapshot(view, snap, myId) {
       Object.assign(p, { slot, name, color });
     }
     decodeWalls(snap.full.walls, game.walls);
+    game.desktop = snap.full.desk || null;
     if (game.wallTimes) {
       // Lobby walls fade by age; walls we hadn't seen before start their clock now.
       for (let i = 0; i < game.walls.length; i++) {
@@ -134,7 +136,7 @@ export function applySnapshot(view, snap, myId) {
 
   if (snap.wo?.length) {
     for (let i = 0; i < snap.wo.length; i += 2) {
-      if (snap.wo[i] === -1) game.walls.fill(0);   // eraser
+      if (snap.wo[i] === -1) clearPaintedWalls(game.walls);   // eraser
       else {
         game.walls[snap.wo[i]] = snap.wo[i + 1];
         if (game.wallTimes) game.wallTimes[snap.wo[i]] = snap.wo[i + 1] ? snap.gt : 0;
@@ -152,11 +154,11 @@ export function applySnapshot(view, snap, myId) {
   let mine = null;
   const seen = new Set();
   for (const a of snap.p) {
-    const [id, x, y, aim, hp, alive, ammo, reloading, ink, fat, small, ricochet, shields, orbit, hitCount, pen, ack, weapon, weaponAmmo, ghost, speed, charging] = a;
+    const [id, x, y, aim, hp, alive, ammo, reloading, ink, fat, small, ricochet, shields, orbit, hitCount, pen, ack, weapon, weaponAmmo, ghost, speed, charging, kvx, kvy] = a;
     const p = game.players[id];
     if (!p) continue;                                // names/colors not known yet; next full snapshot fixes it
     seen.add(id);
-    if (id === myId) mine = { x, y, ack };
+    if (id === myId) mine = { x, y, ack, kvx, kvy };
     else {
       // Remote players glide toward where the host says they are (see smoothRemotes).
       if (p.tx === undefined || newRound) {

@@ -6,7 +6,7 @@ const PREFIX = 'clickclackboompow-v1-';
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';  // no I or O, so codes are easy to read out loud
 const CONNECT_TIMEOUT = 10000;
 
-export const PROTOCOL = 6;                      // bump when host/client messages change
+export const PROTOCOL = 8;                      // bump when host/client messages change
 
 // WebRTC data channels drop the connection on very large messages (a paint bomb's wall changes can
 // be tens of KB), so big messages are sent as ordered string parts and put back together on arrival.

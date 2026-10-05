@@ -87,6 +87,17 @@ export const KILL_HEAL = 5;          // eliminating someone heals you this much
 export const DEATH_BLAST_RADIUS = 90;  // every player explodes when they die...
 export const DEATH_BLAST_DAMAGE = 2;  // ...hurting everyone caught in it and destroying walls
 
+// Knockback: explosions shove players away and every gun (but grenades) kicks its shooter backward.
+// It's a velocity on top of normal movement that dies off quickly, so you slide a bit, then stop.
+export const KNOCK_DECAY = 8;         // per second: the push loses ~90% of its speed in 0.29 s
+// Push-back per shot, as the distance (px) it slides you if you stand still. Stronger guns kick harder.
+export const RECOIL = { pistol: 4, uzi: 3, shotgun: 30, rocket: 32, sniper: 40, laser: 70, flamer: 1.2, grenade: 0 };
+// Explosion shoves: how far (px) a player right at the center slides; less the farther out they are.
+// Players a little outside the damage radius still get nudged.
+export const BLAST_PUSH = { explosion: 150, meteor: 220, deathBlast: 170 };
+const BLAST_PUSH_REACH = 1.3;         // push reaches this many times the damage radius
+const MAX_KNOCK = 2500;               // px/s cap so stacked blasts can't fling anyone across the map
+
 // Lobby playground: nobody takes damage, ink never runs out, and walls fade away on their own.
 export const LOBBY_WALL_LIFE = 7;     // seconds a lobby wall lasts...
 export const LOBBY_WALL_FADE = 3;     // ...the last few of which it spends fading out
@@ -98,6 +109,10 @@ export const MIRROR_DURATION = 8;
 export const MIRROR_FLIP_TIME = 0.5;  // seconds of the flip animation at each end
 export const PAINT_SPLATS = 30;
 export const PAINT_SLOT = 255;        // wall cells from the paint bomb: nobody's, rainbow, ink for whoever breaks them
+export const DESK_SLOT = 254;         // the desktop set pieces (taskbar, score window): same deal, drawn as Win98 UI
+// Set pieces (arena units, on the wall grid): a taskbar along the bottom and the score window top-left.
+export const TASKBAR_H = 36;
+export const SCORE_WINDOW = { x: 4, y: 4, w: 268, top: 32, row: 22, pad: 10 };   // height grows with the teams
 export const MAP_EVENT_MIN = 20;      // "random map events" setting: one fires every 20-30 s
 export const MAP_EVENT_MAX = 30;
 export const INK_STORM_FRACTION = 0.3;
@@ -183,6 +198,8 @@ export function respawnPlayer(game, id, x, y) {
     speed: 0,                         // seconds of SPEED BOOTS left
     charging: 0,                      // laser charge-up seconds left
     trigger: false,                   // was the shoot button already held last tick (for dry-fire clicks)
+    kvx: 0,                           // knockback velocity (px/s) from recoil and explosions
+    kvy: 0,
     burnUntil: 0,                     // game time before which flames can't burn this player again
     shields: null,                    // DEFENSE BALLS: hits left per sphere (0 = broken)
     orbit: 0,                         // current rotation of the shields
@@ -252,7 +269,48 @@ export function applyMovement(game, p, input, dt) {
   }
   const speed = PLAYER_SPEED * (p.speed > 0 ? SPEED_MULT : 1);
   const pull = gravityPull(game, p.x, p.y);
-  movePlayer(game, p, (dx * speed + pull.x) * dt, (dy * speed + pull.y) * dt);
+  const kvx = p.kvx || 0, kvy = p.kvy || 0;
+  const mx = (dx * speed + pull.x + kvx) * dt, my = (dy * speed + pull.y + kvy) * dt;
+  if (!kvx && !kvy) {
+    movePlayer(game, p, mx, my);
+    return;
+  }
+  // Being knocked back can be fast: move in small steps so nobody gets shoved through a thin wall.
+  const x0 = p.x, y0 = p.y;
+  const steps = Math.max(1, Math.ceil(Math.max(Math.abs(mx), Math.abs(my)) / (CELL - 1)));
+  for (let i = 0; i < steps; i++) movePlayer(game, p, mx / steps, my / steps);
+  // A wall (or the arena edge) soaks up the push on that axis.
+  if (Math.abs(p.x - x0) < Math.abs(mx) * 0.5) p.kvx = 0;
+  if (Math.abs(p.y - y0) < Math.abs(my) * 0.5) p.kvy = 0;
+  const decay = Math.exp(-KNOCK_DECAY * dt);
+  p.kvx = Math.abs(p.kvx * decay) < 2 ? 0 : p.kvx * decay;
+  p.kvy = Math.abs(p.kvy * decay) < 2 ? 0 : p.kvy * decay;
+}
+
+// Adds a shove of `distance` px (how far it slides you on its own) in direction `angle`.
+function knock(p, angle, distance) {
+  if (!p.alive || distance <= 0) return;
+  const v = distance * KNOCK_DECAY;
+  p.kvx = (p.kvx || 0) + Math.cos(angle) * v;
+  p.kvy = (p.kvy || 0) + Math.sin(angle) * v;
+  const speed = Math.hypot(p.kvx, p.kvy);
+  if (speed > MAX_KNOCK) {
+    p.kvx *= MAX_KNOCK / speed;
+    p.kvy *= MAX_KNOCK / speed;
+  }
+}
+
+// Every player near a blast slides away from it: the closer to the center, the farther. Everyone,
+// teammates and the shooter included (they don't get hurt, but they do get shoved).
+function blastPush(game, x, y, radius, maxDistance, except = null) {
+  for (const p of Object.values(game.players)) {
+    if (!p.alive || p === except) continue;
+    const reach = (radius + playerRadius(p)) * BLAST_PUSH_REACH;
+    const d = Math.hypot(p.x - x, p.y - y);
+    if (d >= reach) continue;
+    const angle = d > 0.5 ? Math.atan2(p.y - y, p.x - x) : Math.random() * Math.PI * 2;
+    knock(p, angle, maxDistance * (1 - d / reach));
+  }
 }
 
 // Velocity the gravity well drags things at, toward its center.
@@ -432,11 +490,38 @@ function applyPowerup(game, p, type) {
   }
 }
 
-// ERASER: every wall vanishes and every pen refills.
-function eraseWalls(game) {
-  game.walls.fill(0);
+// The set pieces of a match: solid, breakable "walls" that look like a desktop. `rows` = how many
+// lines the score window needs (one per team).
+export function desktopLayout(rows) {
+  const w = SCORE_WINDOW;
+  return {
+    bar: { x: 0, y: ARENA.h - TASKBAR_H, w: ARENA.w, h: TASKBAR_H },
+    win: { x: w.x, y: w.y, w: w.w, h: w.top + rows * w.row + w.pad },
+  };
+}
+
+export function placeDesktop(game, rows) {
+  game.desktop = desktopLayout(rows);
+  for (const r of Object.values(game.desktop)) {
+    for (let cy = Math.floor(r.y / CELL); cy < Math.ceil((r.y + r.h) / CELL); cy++) {
+      for (let cx = Math.floor(r.x / CELL); cx < Math.ceil((r.x + r.w) / CELL); cx++) {
+        game.walls[cy * COLS + cx] = DESK_SLOT;
+      }
+    }
+  }
   game.wallsVersion++;
-  game.wallLog?.push(-1, 0);          // "-1" = clear everything (see netsync)
+}
+
+// Clears every painted wall but leaves the desktop set pieces standing (eraser).
+export function clearPaintedWalls(walls) {
+  for (let i = 0; i < walls.length; i++) if (walls[i] !== DESK_SLOT) walls[i] = 0;
+}
+
+// ERASER: every painted wall vanishes (the desktop stays) and every pen refills.
+function eraseWalls(game) {
+  clearPaintedWalls(game.walls);
+  game.wallsVersion++;
+  game.wallLog?.push(-1, 0);          // "-1" = clear every painted wall (see netsync)
   for (const p of Object.values(game.players)) p.ink = game.rules.penCapacity;
   emit(game, 'erase', {});
 }
@@ -527,6 +612,7 @@ function stepMeteors(game, dt) {
       if (p.alive && Math.hypot(p.x - m.x, p.y - m.y) <= m.r + playerRadius(p)) hurtPlayer(game, p, METEOR_DAMAGE);
     }
     chip(game, m.x, m.y, breakWall(game, m.x, m.y, m.r), true);
+    blastPush(game, m.x, m.y, m.r, BLAST_PUSH.meteor);
     emit(game, 'meteor', { x: m.x, y: m.y, r: m.r });
     return false;
   });
@@ -541,6 +627,7 @@ function shoot(game, p) {
   const ricochet = kind !== 'rocket' && p.ricochet > 0;
   if (ricochet) p.ricochet -= 1;
   emit(game, 'shoot', { x: p.x, y: p.y, w: kind, ricochet, pid: p.id, a: Math.round(p.aim * 100) / 100 });
+  if (kind !== 'laser') knock(p, p.aim + Math.PI, RECOIL[kind] ?? 0);   // recoil: pushed back the way you came
 
   if (kind === 'pistol') {
     p.ammo -= 1;
@@ -602,7 +689,8 @@ function fireLaser(game, p) {
     const miss = Math.hypot(o.x - (p.x + dx * along), o.y - (p.y + dy * along));
     if (miss <= LASER_WIDTH + playerRadius(o)) hurtPlayer(game, o, LASER_DAMAGE, p.id);
   }
-  emit(game, 'laser', { x: p.x, y: p.y, x2, y2, color: p.color });
+  emit(game, 'laser', { x: p.x, y: p.y, x2, y2, color: p.color, pid: p.id });
+  knock(p, p.aim + Math.PI, RECOIL.laser);
   p.weapon = 'pistol';
   p.weaponAmmo = 0;
 }
@@ -820,6 +908,7 @@ function explode(game, x, y, direct, { damage = EXPLOSION_DAMAGE, radius = EXPLO
     if (!p.alive || p === direct || isTeammate(p, team, by)) continue;
     if (Math.hypot(p.x - x, p.y - y) <= radius + playerRadius(p)) hurtPlayer(game, p, damage, by);
   }
+  blastPush(game, x, y, radius, BLAST_PUSH.explosion);
   emit(game, 'explode', { x, y, r: radius });
 }
 
@@ -857,6 +946,7 @@ function deathBlast(game, p, by) {
     if (o === p || !o.alive || (p.color && o.color === p.color)) continue;          // teammates are spared
     if (Math.hypot(o.x - p.x, o.y - p.y) <= r + playerRadius(o)) hurtPlayer(game, o, DEATH_BLAST_DAMAGE, by);
   }
+  blastPush(game, p.x, p.y, r, BLAST_PUSH.deathBlast, p);
 }
 
 export function healPlayer(game, p, amount) {
@@ -885,11 +975,12 @@ function bounce(b, px, py) {
 
 // Knocks out wall cells around the impact. Anyone can break any wall, but each broken cell's ink
 // goes back to the player who drew it (or their team, see returnInk). Ink from a player who left is lost.
-// Paint bomb cells belong to nobody: their ink goes to `by`, whoever broke them (if anyone).
+// Paint bomb cells and the desktop set pieces belong to nobody: their ink goes to `by`, whoever
+// broke them (if anyone).
 // Returns the slot of a wall it broke (for the chip particles), or 0 if there was nothing to break.
 function breakWall(game, x, y, radius = BREAK_RADIUS, by = null) {
   const owners = playersBySlot(game);
-  if (by != null && game.players[by]) owners[PAINT_SLOT] = game.players[by];
+  if (by != null && game.players[by]) owners[PAINT_SLOT] = owners[DESK_SLOT] = game.players[by];
   let changed = false, hitSlot = 0;
   forCellsAround(x, y, radius, (c, r, idx) => {
     const slot = game.walls[idx];

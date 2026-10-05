@@ -491,6 +491,8 @@ function onSnapshot(snap) {
   client.pending = client.pending.filter((q) => q.seq > mine.ack);
   me.x = mine.x;
   me.y = mine.y;
+  me.kvx = mine.kvx || 0;
+  me.kvy = mine.kvy || 0;
   if (me.alive && canMove(view.match)) for (const q of client.pending) applyMovement(view.game, me, q.input, TICK);
 }
 

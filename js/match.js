@@ -7,7 +7,7 @@
 
 import {
   ARENA, createGame, addPlayer, step, emptyInput, emit, hurtPlayer,
-  findFreeSpot, spawnPowerup, randomPowerupType, ROUND_START_POWERUPS,
+  findFreeSpot, spawnPowerup, randomPowerupType, ROUND_START_POWERUPS, placeDesktop, TASKBAR_H, SCORE_WINDOW,
 } from './game.js';
 import { gameRules, teamsOf } from './settings.js';
 
@@ -18,12 +18,16 @@ export const SUDDEN_DEATH_TICK = 1.5;  // once the round timer runs out, everyon
 
 // The 8 spawn spots (corners and edge midpoints) in clockwise order around the arena. Players take
 // evenly spaced spots around this ring, teammates next to each other, so teams start grouped and
-// solo players start spread out (2 players get opposite corners).
+// solo players start spread out (2 players get opposite corners). They stay clear of the desktop
+// set pieces: the top-left spot sits to the right of the score window, the bottom row above the taskbar.
 const M = 70;
 const { w: W, h: H } = ARENA;
+const TOP_LEFT_X = SCORE_WINDOW.x + SCORE_WINDOW.w + 110;
+const BOTTOM_Y = H - TASKBAR_H - M;
+const MID_Y = (H - TASKBAR_H) / 2;
 export const SPAWN_RING = [
-  { x: M, y: M }, { x: W / 2, y: M }, { x: W - M, y: M }, { x: W - M, y: H / 2 },
-  { x: W - M, y: H - M }, { x: W / 2, y: H - M }, { x: M, y: H - M }, { x: M, y: H / 2 },
+  { x: TOP_LEFT_X, y: M }, { x: (TOP_LEFT_X + W - M) / 2, y: M }, { x: W - M, y: M }, { x: W - M, y: MID_Y },
+  { x: W - M, y: BOTTOM_Y }, { x: W / 2, y: BOTTOM_Y }, { x: M, y: BOTTOM_Y }, { x: M, y: MID_Y },
 ];
 
 // roster: [{ id, name, color }] in join order. firstEventId continues the lobby's event numbering.
@@ -54,6 +58,7 @@ function startRound(match) {
   const game = createGame(gameRules(match.settings), {
     firstEventId: match.game ? match.game.nextEventId : match.firstEventId,
   });
+  placeDesktop(game, teamsOf(match.roster).length);
   // Teammates take neighboring spots; the whole layout rotates every round so nobody keeps a corner.
   const order = teamsOf(match.roster).flatMap((t) => t.members);
   const n = order.length;
@@ -61,7 +66,7 @@ function startRound(match) {
   order.forEach((r, i) => {
     const spot = SPAWN_RING[(turn + Math.floor((i * SPAWN_RING.length) / n)) % SPAWN_RING.length];
     const p = addPlayer(game, r.id, { name: r.name, color: r.color, x: spot.x, y: spot.y });
-    p.aim = Math.atan2(H / 2 - spot.y, W / 2 - spot.x);
+    p.aim = Math.atan2(MID_Y - spot.y, W / 2 - spot.x);
   });
   // Every round starts with a few random powerups already on the map (unless the host turned them off).
   if (game.rules.powerupInterval > 0) {

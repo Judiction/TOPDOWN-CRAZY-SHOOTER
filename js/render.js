@@ -3,13 +3,13 @@ import {
   POWERUP_RADIUS, FAT_DURATION, SMALL_DURATION, SHIELD_RADIUS, SHIELD_HITS,
   playerRadius, brushRadius, shieldPositions, mirrorScale, GHOST_DURATION, SPEED_DURATION,
   LOBBY_WALL_LIFE, LOBBY_WALL_FADE, PLAYER_RADIUS,
-  PAINT_SLOT,
+  PAINT_SLOT, DESK_SLOT, SCORE_WINDOW,
 } from './game.js';
 import {
   updateFx, shakeOffset, drawBackgroundFx, drawWallFx, drawMeteors, drawSmoke, drawTopFx,
-  drawGravity, gravityFlash, drawPlayerFx, drawBlackout, drawBanners, drawFloats, drawShells,
+  drawGravity, gravityFlash, weaponKick, drawPlayerFx, drawBlackout, drawBanners, drawFloats, drawShells,
 } from './fx.js';
-import { powerupIcon } from './icons.js';
+import { powerupIcon, shortcutIcon, iconCaption, tinyText } from './icons.js';
 import { createBackground, BG_W, BG_H } from './background.js';
 import { teamsOf } from './settings.js';
 import { drawPlayerSprite, darken, muzzleDistance, spriteFor, BULLET_SPRITE } from './sprites.js';
@@ -214,7 +214,7 @@ export function render(ctx, game, localId, input, { hud = true, pattern = 0 } = 
 
   drawGravity(ctx, game, now);
   drawMeteors(ctx, game);
-  for (const u of game.powerups) drawPowerup(ctx, u);
+  for (const u of game.powerups) drawPowerup(ctx, u, now);
   for (const p of Object.values(game.players)) {
     // Ghosts are completely invisible to everyone else — cursor, bars and name.
     if (p.alive && p.ghost > 0 && p.id !== localId) continue;
@@ -274,7 +274,7 @@ export function render(ctx, game, localId, input, { hud = true, pattern = 0 } = 
     game.mirror?.axis === 'x' ? [ARENA.w / 2 + (x - ARENA.w / 2) * flip, y]
       : game.mirror ? [x, ARENA.h / 2 + (y - ARENA.h / 2) * flip] : [x, y];
   drawFloats(ctx, game, now, localId, toScreen);
-  if (me && hud) drawHud(ctx, me);
+  if (me && hud) drawHud(ctx, me, game.desktop);
   drawBanners(ctx, now);
 }
 
@@ -385,18 +385,22 @@ function drawWalls(ctx, game) {
       d[o] = rgb[0];
       d[o + 1] = rgb[1];
       d[o + 2] = rgb[2];
-      let alpha = slot ? 255 : 0;
-      if (slot && game.wallTimes) {
+      const desk = slot === DESK_SLOT;
+      deskMask.data[o + 3] = desk ? 255 : 0;
+      let alpha = slot && !desk ? 255 : 0;
+      if (alpha && game.wallTimes) {
         const left = LOBBY_WALL_LIFE - (game.time - game.wallTimes[i]);
         if (left < LOBBY_WALL_FADE) alpha = FADE_STEPS[Math.max(0, Math.min(3, Math.floor((left / LOBBY_WALL_FADE) * 4)))];
       }
       d[o + 3] = alpha;
-      if (slot) count++;
+      if (alpha) count++;
     }
     wallCtx.putImageData(wallPixels, 0, 0);
     wallsDrawnVersion = game.wallsVersion;
     wallCount = count;
+    if (game.desktop) composeDesk(game.desktop);
   }
+  if (game.desktop) ctx.drawImage(deskCanvas, 0, 0, ARENA.w, ARENA.h);
   if (!wallCount) return;
   shineCtx.globalCompositeOperation = 'copy';
   shineCtx.drawImage(wallCanvas, 0, 0);
@@ -414,26 +418,190 @@ function drawWalls(ctx, game) {
   ctx.drawImage(shineCanvas, 0, 0, ARENA.w, ARENA.h);
 }
 
-function drawPowerup(ctx, u) {
-  const s = POWERUP_STYLE[u.type];
-  drawSprite(ctx, disc(Math.round(POWERUP_RADIUS / PX), s.fill, s.outline, 2), u.x, u.y);
-  const icon = powerupIcon(u.type);
-  if (icon) drawSprite(ctx, icon, u.x, u.y);
-  else drawText(ctx, s.label, u.x + PX, u.y + PX, { color: '#ffffff', outline: s.outline, align: 'center', valign: 'middle' });
+// A powerup is a desktop shortcut: the icon hovers over its file-name caption, gently bobbing and
+// swaying (each one on its own rhythm) so it reads as something to grab. Its shadow on the caption
+// shrinks as it rises. Three small images per powerup.
+const HOVER_BOB = 2.5;                  // screen pixels up and down
+const HOVER_SWAY = 1.2;                 // screen pixels side to side
+// ---- the desktop set pieces ----
+// The taskbar and the score window are breakable walls (DESK_SLOT cells, see game.js) drawn as
+// Windows 98 UI: the full-resolution art is cut down to whichever cells are still standing, so
+// shots punch holes straight through it. Rebuilt only when the walls change.
+const deskMaskCanvas = document.createElement('canvas');
+deskMaskCanvas.width = COLS;
+deskMaskCanvas.height = ROWS;
+const deskMaskCtx = deskMaskCanvas.getContext('2d');
+const deskMask = deskMaskCtx.createImageData(COLS, ROWS);
+const deskCanvas = document.createElement('canvas');
+deskCanvas.width = VIEW_W;
+deskCanvas.height = VIEW_H;
+const deskCtx = deskCanvas.getContext('2d');
+let deskArt = null, deskArtKey = '';
+
+const W98 = { face: '#c0c0c0', light: '#dfdfdf', white: '#ffffff', shadow: '#808080', dark: '#000000', navy: '#000080', blue: '#1084d0' };
+const CONTROLS_TEXT = 'WASD MOVE  CLICK SHOOT  R RELOAD  SPACE+CLICK DRAW  M MUTE  ESC MENU';
+// Where the HUD goes on the taskbar (screen pixels).
+const TASK_BUTTON = { x: 60, w: 150 };
+const TRAY_W = 92;
+
+function composeDesk(desk) {
+  const key = JSON.stringify(desk);
+  if (key !== deskArtKey) {
+    deskArt = drawDeskArt(desk);
+    deskArtKey = key;
+  }
+  deskMaskCtx.putImageData(deskMask, 0, 0);
+  deskCtx.imageSmoothingEnabled = false;
+  deskCtx.globalCompositeOperation = 'copy';
+  deskCtx.drawImage(deskArt, 0, 0);
+  deskCtx.globalCompositeOperation = 'destination-in';
+  deskCtx.drawImage(deskMaskCanvas, 0, 0, VIEW_W, VIEW_H);
+  deskCtx.globalCompositeOperation = 'source-over';
 }
 
-// A powerup as it looks on the map (disc + icon or label), as a small canvas at 1 pixel per game
-// pixel — used by the How to Play page.
-export function powerupBadge(type) {
-  const s = POWERUP_STYLE[type];
-  const r = Math.round(POWERUP_RADIUS / PX);
+function drawDeskArt(desk) {
   const c = document.createElement('canvas');
-  c.width = c.height = r * 2 + 1;
+  c.width = VIEW_W;
+  c.height = VIEW_H;
   const g = c.getContext('2d');
-  g.drawImage(disc(r, s.fill, s.outline, 2), 0, 0);
-  const icon = powerupIcon(type) || textSprite(s.label, 8, '#ffffff', s.outline);
-  g.drawImage(icon, Math.floor((c.width - icon.width) / 2) + (powerupIcon(type) ? 0 : 1), Math.floor((c.height - icon.height) / 2) + (powerupIcon(type) ? 0 : 1));
+  const fill = (x, y, w, h, color) => {
+    g.fillStyle = color;
+    g.fillRect(x, y, w, h);
+  };
+  // Win98 3D edges: raised = light top-left / dark bottom-right; sunken = the reverse.
+  const raised = (x, y, w, h) => {
+    fill(x, y, w, h, W98.face);
+    fill(x, y, w, 1, W98.white);
+    fill(x, y, 1, h, W98.white);
+    fill(x, y + h - 1, w, 1, W98.dark);
+    fill(x + w - 1, y, 1, h, W98.dark);
+    fill(x + 1, y + h - 2, w - 2, 1, W98.shadow);
+    fill(x + w - 2, y + 1, 1, h - 2, W98.shadow);
+  };
+  const sunken = (x, y, w, h, face) => {
+    fill(x, y, w, h, face);
+    fill(x, y, w, 1, W98.shadow);
+    fill(x, y, 1, h, W98.shadow);
+    fill(x, y + h - 1, w, 1, W98.white);
+    fill(x + w - 1, y, 1, h, W98.white);
+  };
+
+  // ---- taskbar ----
+  const by = Math.round(desk.bar.y / PX), bh = Math.round(desk.bar.h / PX), bw = VIEW_W;
+  fill(0, by, bw, bh, W98.face);
+  fill(0, by, bw, 1, W98.light);
+  fill(0, by + 1, bw, 1, W98.white);
+  // Start button: the four-color flag + START.
+  const sy = by + 3, sh = bh - 5;
+  raised(2, sy, 52, sh);
+  const fy = sy + Math.floor((sh - 9) / 2);
+  fill(6, fy, 4, 4, '#ff0000');
+  fill(11, fy, 4, 4, '#00a000');
+  fill(6, fy + 5, 4, 4, '#0000ff');
+  fill(11, fy + 5, 4, 4, '#ffd000');
+  const start = textSprite('START', 8, '#000000', null);
+  g.drawImage(start, 18, sy + Math.floor((sh - start.height) / 2) + 1);
+  // Separator, then the pressed-in task button the ammo counter sits on (dithered = "active").
+  fill(57, sy, 1, sh, W98.shadow);
+  fill(58, sy, 1, sh, W98.white);
+  sunken(TASK_BUTTON.x, sy, TASK_BUTTON.w, sh, W98.face);
+  for (let y = sy + 1; y < sy + sh - 1; y++) {
+    for (let x = TASK_BUTTON.x + 1 + ((y + sy) % 2); x < TASK_BUTTON.x + TASK_BUTTON.w - 1; x += 2) fill(x, y, 1, 1, W98.white);
+  }
+  fill(TASK_BUTTON.x, sy, TASK_BUTTON.w, 1, W98.dark);
+  fill(TASK_BUTTON.x, sy, 1, sh, W98.dark);
+  // The controls, in small print across the middle of the taskbar.
+  const trayX = bw - TRAY_W - 3;
+  const textW = CONTROLS_TEXT.length * 4 - 1;
+  const midL = TASK_BUTTON.x + TASK_BUTTON.w + 6, midR = trayX - 6;
+  if (textW <= midR - midL) tinyText(g, CONTROLS_TEXT, Math.round((midL + midR - textW) / 2), by + Math.floor((bh - 5) / 2) + 1, '#000000');
+  // System tray: a sunken box with a little speaker; the clock is drawn on top by the HUD.
+  sunken(trayX, sy, TRAY_W, sh, W98.face);
+  const spx = trayX + 4, spy = sy + Math.floor((sh - 7) / 2);
+  fill(spx, spy + 2, 2, 3, '#000000');
+  fill(spx + 2, spy + 1, 1, 5, '#000000');
+  fill(spx + 3, spy, 1, 7, '#000000');
+  fill(spx + 5, spy + 2, 1, 1, '#808080');
+  fill(spx + 6, spy + 1, 1, 1, '#808080');
+  fill(spx + 5, spy + 4, 1, 1, '#808080');
+  fill(spx + 6, spy + 5, 1, 1, '#808080');
+  fill(spx + 6, spy + 3, 1, 1, '#808080');
+
+  // ---- score window ----
+  const wx = Math.round(desk.win.x / PX), wy = Math.round(desk.win.y / PX);
+  const ww = Math.round(desk.win.w / PX), wh = Math.round(desk.win.h / PX);
+  fill(wx, wy, ww, wh, W98.face);
+  fill(wx, wy, ww, 1, W98.light);
+  fill(wx, wy, 1, wh, W98.light);
+  fill(wx + 1, wy + 1, ww - 2, 1, W98.white);
+  fill(wx + 1, wy + 1, 1, wh - 2, W98.white);
+  fill(wx, wy + wh - 1, ww, 1, W98.dark);
+  fill(wx + ww - 1, wy, 1, wh, W98.dark);
+  fill(wx + 1, wy + wh - 2, ww - 2, 1, W98.shadow);
+  fill(wx + ww - 2, wy + 1, 1, wh - 2, W98.shadow);
+  // Title bar: navy fading to blue, the file name, and the three little buttons.
+  const tx = wx + 3, ty = wy + 3, tw = ww - 6, th = 11;
+  for (let i = 0; i < tw; i++) {
+    const k = i / (tw - 1);
+    const r = Math.round(0x00 + (0x10 - 0x00) * k), gg = Math.round(0x00 + (0x84 - 0x00) * k), b = Math.round(0x80 + (0xd0 - 0x80) * k);
+    fill(tx + i, ty, 1, th, `rgb(${r},${gg},${b})`);
+  }
+  // A tiny "notepad" icon, then the title.
+  fill(tx + 2, ty + 2, 6, 7, W98.white);
+  fill(tx + 3, ty + 4, 4, 1, W98.shadow);
+  fill(tx + 3, ty + 6, 4, 1, W98.shadow);
+  tinyText(g, 'SCORES.TXT', tx + 11, ty + 3, '#ffffff');
+  const button = (x, y, glyph) => {
+    raised(x, y, 9, 8);
+    g.fillStyle = '#000000';
+    if (glyph === 'min') g.fillRect(x + 2, y + 5, 4, 1);
+    else if (glyph === 'max') {
+      g.fillRect(x + 2, y + 1, 5, 2);      // thick top edge, like the real maximize box
+      g.fillRect(x + 2, y + 2, 1, 4);
+      g.fillRect(x + 6, y + 2, 1, 4);
+      g.fillRect(x + 2, y + 5, 5, 1);
+    } else {
+      for (let i = 0; i < 4; i++) {
+        g.fillRect(x + 2 + i, y + 2 + i, 1, 1);
+        g.fillRect(x + 5 - i, y + 2 + i, 1, 1);
+        g.fillRect(x + 3 + i, y + 2 + i, 1, 1);
+        g.fillRect(x + 6 - i, y + 2 + i, 1, 1);
+      }
+    }
+  };
+  const bx = tx + tw - 2 - 9;
+  button(bx, ty + 1, 'close');
+  button(bx - 11, ty + 1, 'max');
+  button(bx - 20, ty + 1, 'min');
+  // The page the scores are written on.
+  const top = wy + Math.round(SCORE_WINDOW.top / PX) - 2;
+  sunken(wx + 3, top, ww - 6, wy + wh - 3 - top, '#ffffff');
+  fill(wx + 4, top + 1, ww - 8, 1, W98.dark);
+  fill(wx + 4, top + 1, 1, wy + wh - 5 - top, W98.dark);
   return c;
+}
+
+function drawPowerup(ctx, u, now) {
+  const icon = shortcutIcon(u.type);
+  if (!icon) return;
+  const t = now / 1000 + u.id * 1.37;
+  const bob = Math.sin(t * 2.6);        // -1 (low) .. 1 (high)
+  const ix = u.x + Math.sin(t * 1.3) * HOVER_SWAY * PX;
+  const iy = u.y - 4 * PX - bob * HOVER_BOB * PX;
+  const caption = iconCaption(u.type);
+  const half = (caption.width / 2) * PX;
+  const cx = Math.max(half, Math.min(ARENA.w - half, u.x));
+  const cy = u.y + 15 * PX;
+  ctx.globalAlpha = 0.35 - bob * 0.1;
+  drawSprite(ctx, disc(Math.round(7 - bob), '#000000', null), u.x, u.y + 10 * PX);
+  ctx.globalAlpha = 1;
+  drawSprite(ctx, caption, cx, cy);
+  drawSprite(ctx, icon, ix, iy);
+}
+
+// A powerup's icon for the How to Play page (1 pixel per game pixel).
+export function powerupBadge(type) {
+  return shortcutIcon(type);
 }
 
 // Rocket: white nose, orange body, pointing where it flies.
@@ -474,7 +642,10 @@ function drawPlayer(ctx, p, rules, isMe, now) {
   ctx.globalAlpha = !p.alive ? 0.25 : p.ghost > 0 ? (Math.floor(now / 90) % 2 ? 0.3 : 0.45) : 1;
   // Just got hit: the whole cursor flashes white.
   const hit = p.alive && justHit.has(p.id);
-  drawCursor(ctx, p.x, p.y, p.aim, r, hit ? '#ffffff' : p.color, spriteFor(p.weapon));
+  // Firing kicks the sprite back along the aim line for a moment.
+  const kick = p.alive ? weaponKick(p.id, now) : null;
+  const kx = kick ? -Math.cos(p.aim) * kick.back : 0, ky = kick ? -Math.sin(p.aim) * kick.back : 0;
+  drawCursor(ctx, p.x + kx, p.y + ky, p.aim - (kick ? kick.tip : 0), r, hit ? '#ffffff' : p.color, spriteFor(p.weapon));
   ctx.globalAlpha = 1;
 
   if (!p.alive) return;
@@ -559,16 +730,34 @@ function drawPenCursor(ctx, me, input) {
   drawSprite(ctx, ring(r, color), input.mx, input.my);
 }
 
-function drawHud(ctx, me) {
+function drawHud(ctx, me, desk) {
   if (!me.alive) return;
-  // Ammo, bottom-left: the powerup weapon if you have one, otherwise the pistol magazine.
+  // Ammo, bottom-left: the powerup weapon if you have one, otherwise the pistol magazine. In a match
+  // it sits on the taskbar's task button (text only: the taskbar is too thin for the big icon).
+  if (desk) {
+    const x = (TASK_BUTTON.x + 6) * PX, y = desk.bar.y + desk.bar.h / 2 + PX * 2;
+    let text = `${me.ammo} / ${MAG_SIZE}`, color = me.ammo <= 5 ? '#f87171' : '#ffffff';
+    if (me.weapon && me.weapon !== 'pistol') {
+      const s = POWERUP_STYLE[me.weapon];
+      text = me.charging > 0 ? 'CHARGING...' : `${s.label} ${me.weaponAmmo}`;
+      color = s.fill === '#0a0a0a' ? '#ffffff' : s.fill;
+    } else if (me.reloading > 0) {
+      text = `RELOADING ${me.reloading.toFixed(1)}s`;
+      color = '#facc15';
+    }
+    drawText(ctx, text, x, y, { size: 8, color, valign: 'middle' });
+    if (me.ricochet > 0) {
+      drawText(ctx, `RICOCHET x${me.ricochet}`, 16, desk.bar.y - 8, { size: 16, color: POWERUP_STYLE.ricochet.fill, valign: 'bottom' });
+    }
+    return;
+  }
   const x = 16, y = ARENA.h - 12;
   if (me.weapon && me.weapon !== 'pistol') {
     const s = POWERUP_STYLE[me.weapon];
     const icon = powerupIcon(me.weapon);
-    ctx.drawImage(icon, x, y - 34, icon.width * PX * 2, icon.height * PX * 2);
+    ctx.drawImage(icon, x, y - icon.height * PX + 4, icon.width * PX, icon.height * PX);
     const label = me.charging > 0 ? 'CHARGING...' : `${s.label} ${me.weaponAmmo}`;
-    drawText(ctx, label, x + icon.width * PX * 2 + 12, y, { size: 16, color: s.fill === '#0a0a0a' ? '#ffffff' : s.fill, valign: 'bottom' });
+    drawText(ctx, label, x + icon.width * PX + 8, y, { size: 16, color: s.fill === '#0a0a0a' ? '#ffffff' : s.fill, valign: 'bottom' });
   } else if (me.reloading > 0) {
     drawText(ctx, `RELOADING ${me.reloading.toFixed(1)}s`, x, y, { size: 16, color: '#facc15', valign: 'bottom' });
   } else {
@@ -628,7 +817,8 @@ export function renderMatchHud(ctx, match, localId) {
 
   // Top-left: one row per team (a solo player is a team of one) with its rounds won.
   const teams = teamsOf(match.roster);
-  let y = 14;
+  const desk = game.desktop;
+  let y = desk ? desk.win.y + SCORE_WINDOW.top + 2 : 14;
   ctx.globalAlpha = under(0, 0, 270, 30 + teams.length * 22) ? 0.3 : 1;
   for (const t of teams) {
     const alive = t.members.some((r) => game.players[r.id]?.alive);
@@ -645,12 +835,21 @@ export function renderMatchHud(ctx, match, localId) {
   ctx.globalAlpha = under(cx - 140, 0, cx + 140, 110) ? 0.3 : 1;
   drawText(ctx, `ROUND ${match.round}`, cx, 12, { size: 16, align: 'center' });
   drawText(ctx, `FIRST TO ${match.settings.roundsToWin} WINS`, cx, 52, { color: '#d1d5db', align: 'center' });
+  // The clock: on the taskbar tray in a match (like the Windows clock), else under the round number.
+  const clockX = desk ? (VIEW_W - 3 - TRAY_W / 2 + 5) * PX : cx;
+  const clockY = desk ? desk.bar.y + desk.bar.h / 2 + PX * 2 : 74;
+  const clockStyle = { align: 'center', valign: desk ? 'middle' : 'top' };
+  if (desk) ctx.globalAlpha = 1;
   if (match.suddenDeath) {
-    if (Math.floor(performance.now() / 300) % 2 === 0) drawText(ctx, 'SUDDEN DEATH', cx, 74, { color: '#f87171', align: 'center' });
-  } else if (match.settings.roundTime > 0 && match.phase === 'playing') {
+    if (Math.floor(performance.now() / 300) % 2 === 0) drawText(ctx, 'SUDDEN DEATH', clockX, clockY, { ...clockStyle, color: '#f87171' });
+  } else if (match.settings.roundTime > 0 && match.phase !== 'countdown') {
     const left = Math.max(0, Math.ceil(match.settings.roundTime - match.roundTime));
     const clock = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
-    drawText(ctx, clock, cx, 74, { color: left <= 10 ? '#f87171' : '#ffffff', align: 'center' });
+    drawText(ctx, clock, clockX, clockY, { ...clockStyle, color: left <= 10 ? '#f87171' : '#ffffff' });
+  } else if (desk) {
+    // No round limit (or still counting down): the tray shows the real time, like a real desktop.
+    const d = new Date();
+    drawText(ctx, `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`, clockX, clockY, { ...clockStyle, color: '#ffffff' });
   }
 
   ctx.globalAlpha = 1;
