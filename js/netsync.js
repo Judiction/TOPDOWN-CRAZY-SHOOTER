@@ -4,7 +4,9 @@
 // A "full" snapshot (first of each round, then every few seconds) also carries everything that rarely
 // changes: settings, roster, names/colors, and the entire wall grid, run-length encoded.
 
-import { createGame, addPlayer, clearPaintedWalls } from './game.js';
+import { createGame, addPlayer, clearPaintedWalls, desktopLayout, CELL, COLS } from './game.js';
+import { teamsOf } from './settings.js';
+import { createStage, encodeStage, applyStage, smoothStage } from './stage.js';
 
 const MAX_EVENTS = 128;
 const r1 = (v) => Math.round(v * 10) / 10;
@@ -14,7 +16,7 @@ const ri = Math.round;
 // ---- inputs (client → host) ----
 
 const BITS = ['up', 'down', 'left', 'right', 'click', 'draw', 'reload'];
-const BULLET_KINDS = ['pistol', 'pellet', 'uzi', 'rocket', 'sniper', 'flame', 'grenade'];
+const BULLET_KINDS = ['pistol', 'pellet', 'uzi', 'rocket', 'sniper', 'flame', 'grenade', 'paper', 'key'];
 
 export function encodeInput(input) {
   let k = 0;
@@ -66,6 +68,7 @@ export function encodeSnapshot(match, { full, events, wallOps, acks }) {
     r: match.round,
     ph: match.phase,
     tm: r2(match.timer),
+    bt: match.bootTime,
     go: r2(match.goTimer),
     sd: match.suddenDeath ? 1 : 0,
     rt: r1(match.roundTime),
@@ -77,6 +80,7 @@ export function encodeSnapshot(match, { full, events, wallOps, acks }) {
       r1(p.fat), r1(p.small), p.ricochet, p.shields, r2(p.orbit), p.hitCount,
       p.pen ? [ri(p.pen.x), ri(p.pen.y)] : 0, acks[p.id] ?? 0, p.weapon, p.weaponAmmo,
       r1(p.ghost), r1(p.speed), r2(p.charging), ri(p.kvx || 0), ri(p.kvy || 0),
+      [r1(p.slow), r1(p.frozen), r1(p.invert), r1(p.jam), r1(p.immune), r1(p.freeAmmo), r1(p.rapid), r1(p.infected)],
     ]),
     b: g.bullets.map((b) => [ri(b.x), ri(b.y), ri(b.vx), ri(b.vy), b.ricochet ? 1 : 0, BULLET_KINDS.indexOf(b.kind), ri(b.travel)]),
     m: g.meteors.map((m) => [m.id, ri(m.x), ri(m.y), m.r, r2(m.t), m.dur]),
@@ -85,6 +89,7 @@ export function encodeSnapshot(match, { full, events, wallOps, acks }) {
     u: g.powerups.map((u) => [u.id, u.type, ri(u.x), ri(u.y)]),
     e: events,
     wo: wallOps,
+    st: encodeStage(g.stage),
   };
   if (full) {
     snap.full = {
@@ -92,7 +97,7 @@ export function encodeSnapshot(match, { full, events, wallOps, acks }) {
       roster: match.roster,
       rules: g.rules,
       bg: g.bgSeed,
-      meta: Object.values(g.players).map((p) => [p.id, p.slot, p.name, p.color]),
+      meta: Object.values(g.players).map((p) => [p.id, p.slot, p.name, p.color, p.cursor]),
       walls: encodeWalls(g.walls),
       desk: g.desktop || null,
     };
@@ -109,6 +114,7 @@ export function applySnapshot(view, snap, myId) {
   if (newRound) {
     const game = createGame(snap.full.rules, { lobby: !!snap.lob });
     game.bgSeed = snap.full.bg;
+    if (game.stage) game.stage = createStage(game.stage.id, game.bgSeed);   // same seed = same clutter as the host
     view.game = game;
     view.match = { round: snap.r, settings: snap.full.settings, roster: snap.full.roster, scores: {}, game };
   }
@@ -118,12 +124,13 @@ export function applySnapshot(view, snap, myId) {
     match.settings = snap.full.settings;
     match.roster = snap.full.roster;
     game.rules = snap.full.rules;
-    for (const [id, slot, name, color] of snap.full.meta) {
-      const p = game.players[id] || addPlayer(game, id, { name, color, x: 0, y: 0 });
-      Object.assign(p, { slot, name, color });
+    for (const [id, slot, name, color, cursor] of snap.full.meta) {
+      const p = game.players[id] || addPlayer(game, id, { name, color, cursor, x: 0, y: 0 });
+      Object.assign(p, { slot, name, color, cursor });
     }
     decodeWalls(snap.full.walls, game.walls);
     game.desktop = snap.full.desk || null;
+    if (game.desktop) game.noDrawFrom = Math.floor(game.desktop.bar.y / CELL) * COLS;
     if (game.wallTimes) {
       // Lobby walls fade by age; walls we hadn't seen before start their clock now.
       for (let i = 0; i < game.walls.length; i++) {
@@ -147,14 +154,14 @@ export function applySnapshot(view, snap, myId) {
 
   game.time = snap.gt;
   Object.assign(match, {
-    phase: snap.ph, timer: snap.tm, goTimer: snap.go, suddenDeath: !!snap.sd, roundTime: snap.rt,
+    phase: snap.ph, timer: snap.tm, bootTime: snap.bt, goTimer: snap.go, suddenDeath: !!snap.sd, roundTime: snap.rt,
     roundWinner: snap.rw, winner: snap.w, scores: snap.sc,
   });
 
   let mine = null;
   const seen = new Set();
   for (const a of snap.p) {
-    const [id, x, y, aim, hp, alive, ammo, reloading, ink, fat, small, ricochet, shields, orbit, hitCount, pen, ack, weapon, weaponAmmo, ghost, speed, charging, kvx, kvy] = a;
+    const [id, x, y, aim, hp, alive, ammo, reloading, ink, fat, small, ricochet, shields, orbit, hitCount, pen, ack, weapon, weaponAmmo, ghost, speed, charging, kvx, kvy, fx] = a;
     const p = game.players[id];
     if (!p) continue;                                // names/colors not known yet; next full snapshot fixes it
     seen.add(id);
@@ -169,6 +176,7 @@ export function applySnapshot(view, snap, myId) {
       p.ty = y;
       p.aim = aim;
     }
+    [p.slow, p.frozen, p.invert, p.jam, p.immune, p.freeAmmo, p.rapid, p.infected] = fx;
     Object.assign(p, {
       hp, alive: !!alive, ammo, reloading, ink, fat, small, ricochet, shields, orbit, hitCount, weapon, weaponAmmo, ghost, speed, charging,
       pen: pen ? { x: pen[0], y: pen[1] } : null,
@@ -182,6 +190,12 @@ export function applySnapshot(view, snap, myId) {
   game.gravity = snap.fx.gravity;
   game.mirror = snap.fx.mirror;
   game.powerups = snap.u.map(([id, type, x, y]) => ({ id, type, x, y }));
+  applyStage(game.stage, snap.st);
+  // The desktop just came up: no need to wait for the next full snapshot to show it.
+  if (game.stage?.ready && !game.desktop) {
+    game.desktop = desktopLayout(teamsOf(match.roster).length);
+    game.noDrawFrom = Math.floor(game.desktop.bar.y / CELL) * COLS;
+  }
 
   for (const e of snap.e) game.events.push(e);
   if (game.events.length > MAX_EVENTS) game.events.splice(0, game.events.length - MAX_EVENTS);
@@ -205,4 +219,5 @@ export function smoothRemotes(game, myId, dt) {
   game.time += dt;
   for (const m of game.meteors) m.t = Math.min(m.dur, m.t + dt);   // keep the warning flashing smoothly
   for (const e of [game.blackout, game.gravity, game.mirror]) if (e) e.t = Math.min(e.dur, e.t + dt);
+  smoothStage(game.stage, dt);
 }

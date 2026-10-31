@@ -10,13 +10,20 @@ export const NAME_MAX = 12;
 
 export const INK_AMOUNTS = { small: 650, normal: 1000, large: 1450 };
 
+export const WALLPAPER_IDS = ['random', 'teal', 'clouds', 'space', 'underwater', 'jungle', 'sunset', 'bricks', 'stone', 'rivets', 'circuit', 'zigzag'];
+
 export const DEFAULT_SETTINGS = {
   roundsToWin: 5,
   roundTime: 90,          // seconds before sudden death; 0 = no limit
   maxHp: 10,
   ink: 'normal',
-  powerupInterval: 30,    // seconds between powerup spawns; 0 = off
+  powerupInterval: 10,    // seconds between powerup spawns; 0 = off
   mapEvents: false,       // a random map event every 20-30 s
+  stage: 'win98',
+  wallpaper: 'random',    // a wallpaper id (see stages/wallpapers.js), or 'random'
+  stageEvents: true,      // the computer does things on its own
+  popups: true,
+  viruses: true,
 };
 
 // What the host can change in the lobby, and the allowed values.
@@ -27,6 +34,9 @@ export const SETTING_DEFS = [
   { key: 'ink', label: 'INK', options: ['small', 'normal', 'large'], format: (v) => v.toUpperCase() },
   { key: 'powerupInterval', label: 'POWERUPS', options: [0, 10, 15, 30, 45, 60], format: (v) => (v ? `EVERY ${v}S` : 'OFF') },
   { key: 'mapEvents', label: 'RANDOM MAP EVENTS', options: [false, true], format: (v) => (v ? 'ON' : 'OFF') },
+  { key: 'stageEvents', label: 'STAGE EVENTS', options: [false, true], format: (v) => (v ? 'ON' : 'OFF') },
+  { key: 'popups', label: 'POP-UPS', options: [false, true], format: (v) => (v ? 'ON' : 'OFF') },
+  { key: 'viruses', label: 'VIRUSES', options: [false, true], format: (v) => (v ? 'ON' : 'OFF') },
 ];
 
 // The subset of settings the simulation itself needs.
@@ -36,6 +46,11 @@ export function gameRules(settings) {
     penCapacity: INK_AMOUNTS[settings.ink] ?? INK_AMOUNTS.normal,
     powerupInterval: settings.powerupInterval,
     mapEvents: !!settings.mapEvents,
+    stage: settings.stage,
+    wallpaper: settings.wallpaper,
+    stageEvents: !!settings.stageEvents,
+    popups: !!settings.popups,
+    viruses: !!settings.viruses,
   };
 }
 

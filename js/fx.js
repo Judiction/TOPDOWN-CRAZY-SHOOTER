@@ -1,18 +1,18 @@
 // One-shot visual effects driven by game events: explosions, laser beams, meteor strikes (white
 // flash + screen shake), the ERASER's rainbow dissolve, storms, the gravity well, the blackout, pickup
-// sparkles and big announcement banners. Purely cosmetic and local to each screen, so nothing here
+// sparkles. Purely cosmetic and local to each screen, so nothing here
 // is sent over the network.
 
 import { ARENA, COLS, ROWS, EXPLOSION_RADIUS, MAP_EVENTS, PAINT_SLOT, meteorRadius, meteorFlashes, playerRadius } from './game.js';
 import { PX, VIEW_W, VIEW_H, snap, disc, ring, drawSprite, drawText } from './pixel.js';
 import { muzzleDistance } from './sprites.js';
+import { addGlitch } from './glitch.js';
 
 const booms = [];                     // { x, y, r, start, dur }
 const beams = [];                     // laser: { x, y, x2, y2, color, start }
 const puffs = [];                     // rocket smoke: { x, y, born }
 const sparks = [];                    // pickup particles: { x, y, vx, vy, color, born, life, shape }
 const glows = [];                     // medkit flash on a player: { pid, start }
-const banners = [];                   // big centered text: { text, color, start, dur }
 const floats = [];                    // small text over a player: { pid, text, color, start, dur, rise }
 let shake = { until: 0, amp: 0, dur: 1 };
 let whiteFlash = null;                // { start, dur }
@@ -25,7 +25,6 @@ let seenEventId = null;
 const PUFF_MS = 450;
 const ERASE_MS = 900;
 const BEAM_MS = 420;
-const BANNER_MS = 1300;
 const STORM_MS = 3000;
 // Seconds after the event at which lightning flashes; every other strike also draws a bolt.
 const STORM_STRIKES = [0, 0.1, 0.32, 0.6, 0.7, 1.05, 1.4, 1.5, 1.95, 2.3, 2.4];
@@ -38,16 +37,13 @@ const PICKUP_NAMES = {
   laser: 'LASER', sniper: 'SNIPER', flamer: 'FLAMETHROWER', grenade: 'GRENADES',
 };
 
-const BANNERS = {
-  erase: ['ERASED!', null],
-  blackout: ['BLACKOUT!', '#fde047'],
-  gravity: ['GRAVITY WELL!', '#c4b5fd'],
-  paintbomb: ['PAINT BOMB!', null],
-  mirror: ['MIRRORED!', '#e2e8f0'],
-  inkstorm: ['INK STORM!', '#93c5fd'],
+// How hard each moment makes the screen glitch (0..1).
+const GLITCH_ON = {
+  toasted: 0.3, paintbomb: 0.5, explode: 0.4, meteor: 0.75, deathBlast: 0.7, virusBlast: 1, laser: 0.45, erase: 0.55, blackout: 0.5, gravity: 0.5,
+  mirror: 0.6, inkstorm: 0.5, infected: 0.5, suddenDeath: 0.6, roundEnd: 0.5, go: 0.3, program: 0.3,
 };
 
-// Rainbow lookup for the eraser dissolve and rainbow banners.
+// Rainbow lookup for the eraser dissolve.
 const RAINBOW = Array.from({ length: 64 }, (_, i) => {
   const h = (i / 64) * 6;
   const f = (n) => Math.round(255 * Math.max(0, Math.min(1, Math.abs(((h + n) % 6) - 3) - 1)));
@@ -62,18 +58,14 @@ function brighten(hex) {
   }
   return brightCache[hex];
 }
-const rainbowHex = (i) => `#${RAINBOW[i & 63].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+const STATIC = ['#000000', '#404040', '#808080', '#c0c0c0', '#ffffff'];   // the paint bomb's corrupted pixels
+const staticPixel = () => STATIC[Math.floor(Math.random() * STATIC.length)];
 
 const eraseCanvas = document.createElement('canvas');
 eraseCanvas.width = COLS;
 eraseCanvas.height = ROWS;
 const eraseCtx = eraseCanvas.getContext('2d');
 const eraseImage = eraseCtx.createImageData(COLS, ROWS);
-
-const darkCanvas = document.createElement('canvas');
-darkCanvas.width = VIEW_W;
-darkCanvas.height = VIEW_H;
-const darkCtx = darkCanvas.getContext('2d');
 
 // Call at the start of each frame, BEFORE walls are redrawn: wallImage still holds the walls as
 // they were last drawn, which the eraser effect needs to dissolve them.
@@ -93,11 +85,10 @@ export function updateFx(game, now, wallImage, localId) {
       const k = KICK[e.type === 'laser' ? 'laser' : e.w];
       if (k && e.pid) kicks.set(e.pid, { start: now, ...k });
     }
-    if (BANNERS[e.type]) {
-      const [text, color] = BANNERS[e.type];
-      banners.length = 0;               // one announcement at a time: the newest replaces the old
-      banners.push({ text, color, start: now, dur: BANNER_MS });
-    }
+    if (GLITCH_ON[e.type]) addGlitch(GLITCH_ON[e.type]);
+    if (e.type === 'stageEvent' && e.name === 'bsod') addGlitch(1);
+    if (e.type === 'bsodOut') addGlitch(1);
+    if (e.type === 'bsodEnd') addGlitch(0.8);
     if (e.type === 'explode') {
       booms.push({ x: e.x, y: e.y, r: e.r || EXPLOSION_RADIUS, start: now, dur: 350 });
       addShake(now, 4, 160);
@@ -109,6 +100,22 @@ export function updateFx(game, now, wallImage, localId) {
       booms.push({ x: e.x, y: e.y, r: e.r, start: now, dur: 600, red: true });
       redFlash = { start: now, dur: 500 };
       addShake(now, 9, 380);
+    } else if (e.type === 'virusBlast') {
+      booms.push({ x: e.x, y: e.y, r: e.r, start: now, dur: 750, green: true });
+      whiteFlash = { start: now, dur: 300 };
+      addShake(now, 14, 500);
+      burst(e.x, e.y, '#39ff14', 40, now, 'chip');
+    } else if (e.type === 'infected') {
+      floats.push({ pid: e.pid, text: 'INFECTED!', color: '#39ff14', start: now, dur: 1500, rise: true });
+      burst(e.x, e.y, '#39ff14', 18, now, 'chip');
+    } else if (e.type === 'virusDie') {
+      burst(e.x, e.y, '#39ff14', 16, now, 'chip');
+    } else if (e.type === 'virusHit') {
+      burst(e.x, e.y, '#39ff14', 3, now, 'chip');
+    } else if (e.type === 'clutter') {
+      burst(e.x, e.y, '#ffffff', 8, now, 'chip');
+    } else if (e.type === 'popup') {
+      floats.push({ pid: e.pid, text: e.float, color: e.good ? '#66ff66' : '#ff6666', start: now, dur: 1400, rise: true });
     } else if (e.type === 'erase') {
       startErase(now, wallImage);
       invertFlash = { start: now, dur: 650 };
@@ -123,10 +130,7 @@ export function updateFx(game, now, wallImage, localId) {
     } else if (e.type === 'pickup' && !MAP_EVENTS.includes(e.kind) && PICKUP_NAMES[e.kind] && !hidden(e.pid)) {
       floats.push({ pid: e.pid, text: PICKUP_NAMES[e.kind], color: '#ffffff', start: now, dur: FLOAT_MS, rise: false });
     }
-    if (e.type === 'pickup' && e.kind === 'meteor') {
-      banners.length = 0;
-      banners.push({ text: 'METEORS!', color: '#fb923c', start: now, dur: BANNER_MS });
-    } else if (e.type === 'heal' && !hidden(e.pid)) {
+    if (e.type === 'heal' && !hidden(e.pid)) {
       glows.push({ pid: e.pid, start: now });
       burst(e.x, e.y, '#4ade80', 10, now, 'plus');
       floats.push({ pid: e.pid, text: `+${e.amount ?? 5} HP`, color: '#4ade80', start: now, dur: 1100, rise: true });
@@ -135,16 +139,13 @@ export function updateFx(game, now, wallImage, localId) {
     } else if (e.type === 'chip') {
       // Pixel bits off a wall, a little brighter than the wall itself.
       if (e.slot === PAINT_SLOT) {
-        for (let i = 0; i < (e.big ? 8 : 4); i++) burst(e.x, e.y, rainbowHex(Math.floor(Math.random() * 64)), 2, now, 'chip');
+        for (let i = 0; i < (e.big ? 8 : 4); i++) burst(e.x, e.y, staticPixel(), 2, now, 'chip');
       } else {
         const owner = Object.values(game.players).find((p) => p.slot === e.slot);
         burst(e.x, e.y, brighten(owner?.color || '#9ca3af'), e.big ? 16 : 7, now, 'chip');
       }
     } else if (e.type === 'paintbomb') {
-      for (let i = 0; i < 80; i++) burst(Math.random() * ARENA.w, Math.random() * ARENA.h, rainbowHex(i * 7), 1, now, 'drop');
-    } else if (e.type === 'pickup' && e.random && e.kind === 'meteor') {
-      banners.length = 0;               // the other map events announce themselves; meteors need a banner
-      banners.push({ text: 'METEOR SHOWER!', color: '#fdba74', start: now, dur: BANNER_MS });
+      for (let i = 0; i < 80; i++) burst(Math.random() * ARENA.w, Math.random() * ARENA.h, staticPixel(), 1, now, 'chip');
     }
   }
   // Rocket smoke: a puff behind every rocket each frame.
@@ -495,7 +496,9 @@ export function drawTopFx(ctx, now) {
     }
     const grow = 1 - (1 - k) ** 3;
     const r = Math.max(1, Math.round((b.r * (0.3 + 0.7 * grow)) / PX));
-    const fill = b.red
+    const fill = b.green
+      ? k < 0.2 ? '#ffffff' : k < 0.5 ? '#86ff6a' : '#16a34a'
+      : b.red
       ? k < 0.2 ? '#ffffff' : k < 0.5 ? '#fb7185' : '#dc2626'
       : k < 0.25 ? '#ffffff' : k < 0.55 ? '#fde047' : '#fb923c';
     ctx.globalAlpha = 0.85 * (1 - k);
@@ -578,46 +581,63 @@ function drawStorm(ctx, now) {
   ctx.globalAlpha = 1;
 }
 
-// BLACKOUT: everything goes dark except a small pool of light around your own cursor.
+// BLACKOUT: the video driver gives up and everything turns into a censored mosaic, except a jagged
+// clear patch around your own cursor. A rough transition band of finer mosaic edges the patch.
+// One frame copy and two shrunken copies, then pasted-up rectangles on a fixed grid.
+const CENSOR_CELL = 18;                 // screen pixels per mosaic block
+const CLEAR_REACH = 3.1;                // blocks of clear view around you
+const FINE_CELL = 5;
+
+function canvasLayer() {
+  const c = document.createElement('canvas');
+  c.width = VIEW_W;
+  c.height = VIEW_H;
+  return { c, g: c.getContext('2d') };
+}
+
+let censor = null;
+
 export function drawBlackout(ctx, game, me) {
   const b = game.blackout;
   if (!b) return;
-  const fade = Math.min(1, b.t / 0.35, (b.dur - b.t) / 0.5);
-  darkCtx.globalCompositeOperation = 'source-over';
-  darkCtx.clearRect(0, 0, VIEW_W, VIEW_H);
-  darkCtx.fillStyle = '#000000';
-  darkCtx.fillRect(0, 0, VIEW_W, VIEW_H);
-  if (me && me.alive) {
-    darkCtx.globalCompositeOperation = 'destination-out';
-    const cx = Math.round(me.x / PX), cy = Math.round(me.y / PX);
-    for (const [r, a] of [[84, 0.35], [78, 0.35], [72, 1]]) {
-      const s = disc(r, '#ffffff', null);
-      darkCtx.globalAlpha = a;
-      darkCtx.drawImage(s, cx - r, cy - r);
-    }
-    darkCtx.globalAlpha = 1;
-  }
-  ctx.globalAlpha = 0.96 * fade;
-  ctx.drawImage(darkCanvas, 0, 0, ARENA.w, ARENA.h);
-  ctx.globalAlpha = 1;
-}
+  censor ??= { sharp: canvasLayer(), coarse: canvasLayer(), fine: canvasLayer() };
+  const t = ctx.getTransform();
+  const fade = Math.max(0, Math.min(1, b.t / 0.35, (b.dur - b.t) / 0.4));
+  // The blocks grow in and shrink away instead of fading.
+  const cell = Math.max(2, Math.round((CENSOR_CELL * fade) / 2) * 2);
+  const { sharp, coarse, fine } = censor;
+  sharp.g.globalCompositeOperation = 'copy';
+  sharp.g.drawImage(ctx.canvas, 0, 0);
+  const cw = Math.ceil(VIEW_W / cell), ch = Math.ceil(VIEW_H / cell);
+  coarse.g.globalCompositeOperation = 'copy';
+  coarse.g.imageSmoothingEnabled = true;
+  coarse.g.drawImage(sharp.c, 0, 0, cw, ch);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(coarse.c, 0, 0, cw, ch, 0, 0, cw * cell, ch * cell);
 
-// Screen-space (never mirrored or shaken): big announcement text for map events.
-export function drawBanners(ctx, now) {
-  for (let i = banners.length - 1; i >= 0; i--) {
-    const b = banners[i];
-    const k = (now - b.start) / b.dur;
-    if (k >= 1) {
-      banners.splice(i, 1);
-      continue;
+  if (me?.alive) {
+    const fw = Math.ceil(VIEW_W / FINE_CELL), fh = Math.ceil(VIEW_H / FINE_CELL);
+    fine.g.globalCompositeOperation = 'copy';
+    fine.g.imageSmoothingEnabled = true;
+    fine.g.drawImage(sharp.c, 0, 0, fw, fh);
+    const sx = t.a * me.x + t.e, sy = t.d * me.y + t.f;
+    const reach = (CLEAR_REACH * CENSOR_CELL) / cell, span = Math.ceil(reach) + 3;
+    const col0 = Math.floor(sx / cell), row0 = Math.floor(sy / cell);
+    for (let row = row0 - span; row <= row0 + span; row++) {
+      for (let col = col0 - span; col <= col0 + span; col++) {
+        const dx = Math.abs(col + 0.5 - sx / cell), dy = Math.abs(row + 0.5 - sy / cell);
+        // Square-ish, with a fixed random bite out of each block's edge: never a clean circle.
+        const noise = (((col * 73856093) ^ (row * 19349663)) >>> 0) % 100 / 100;
+        const d = Math.max(dx, dy) + Math.min(dx, dy) * 0.35 + noise * 1.1;
+        const x = col * cell, y = row * cell;
+        if (d < reach) ctx.drawImage(sharp.c, x, y, cell, cell, x, y, cell, cell);
+        else if (d < reach + 1.4) ctx.drawImage(fine.c, x / FINE_CELL, y / FINE_CELL, cell / FINE_CELL, cell / FINE_CELL, x, y, cell, cell);
+      }
     }
-    // Pops in big, settles, then fades.
-    const scale = k < 0.08 ? 4 : 3;
-    const color = b.color || rainbowHex(Math.floor(now / 40));
-    ctx.globalAlpha = Math.min(1, 3 * (1 - k));
-    drawText(ctx, b.text, ARENA.w / 2, ARENA.h / 2 - 70, { size: 16, scale, color, align: 'center', valign: 'middle' });
   }
-  ctx.globalAlpha = 1;
+  ctx.restore();
 }
 
 // Small text popping up over a player: the powerup they just grabbed (flashing), or "+5 HP" (rising).

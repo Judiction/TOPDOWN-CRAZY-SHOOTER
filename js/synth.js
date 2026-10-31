@@ -393,6 +393,99 @@ export const SFX = {
     tone(out, { t0: 0.028, dur: 0.01, duty: 0.125, freq: 1300, vol: decay(0.01, 1, 0.2) });
     return out;
   },
+  // ---- the computer ----
+  // The BIOS self-test beep.
+  postBeep() {
+    const out = samples(0.18);
+    tone(out, { dur: 0.16, duty: 0.5, freq: 1000, vol: decay(0.16, 0.2, 0.55) });
+    return out;
+  },
+  // The desktop is up: a soft rising chord, original to this game.
+  startup() {
+    const out = samples(2.4);
+    [[60, 0], [67, 0.18], [72, 0.36], [76, 0.54], [79, 0.72], [84, 0.95]].forEach(([n, t0]) => {
+      tone(out, { t0, dur: 1.3, wave: 'tri', freq: midi(n), vol: decay(1.3, 1.4, 0.5) });
+      tone(out, { t0, dur: 0.9, duty: 0.125, freq: midi(n + 12), vol: decay(0.9, 2, 0.12) });
+    });
+    return out;
+  },
+  // A dialog box opening.
+  ding() {
+    const out = samples(0.35);
+    tone(out, { dur: 0.32, wave: 'tri', freq: 1320, vol: decay(0.32, 1.5, 0.7) });
+    tone(out, { dur: 0.2, duty: 0.125, freq: 2640, vol: decay(0.2, 2, 0.2) });
+    return out;
+  },
+  // An error dialog: two low, grumpy notes.
+  chord() {
+    const out = samples(0.4);
+    tone(out, { dur: 0.2, duty: 0.25, freq: 330, vol: decay(0.2, 1, 0.5) });
+    tone(out, { t0: 0.14, dur: 0.24, duty: 0.25, freq: 247, vol: decay(0.24, 1, 0.5) });
+    return out;
+  },
+  popupGood() {
+    const out = samples(0.3);
+    [76, 81, 88].forEach((n, i) => tone(out, { t0: i * 0.06, dur: 0.14, duty: 0.25, freq: midi(n), vol: decay(0.14, 1, 0.5) }));
+    return out;
+  },
+  // A 56k modem handshake: tones, then a wash of static.
+  modem() {
+    const out = samples(2.2);
+    tone(out, { dur: 0.3, duty: 0.5, freq: 1800, vol: 0.28 });
+    tone(out, { t0: 0.34, dur: 0.3, duty: 0.5, freq: 2200, vol: 0.28 });
+    tone(out, { t0: 0.7, dur: 0.5, duty: 0.25, freq: (t) => 1400 + Math.sin(t * 90) * 700, vol: 0.25 });
+    noise(out, { t0: 1.1, dur: 1.1, short: true, rate: 9000, vol: decay(1.1, 0.3, 0.4) });
+    return out;
+  },
+  // Dot-matrix printer: a burst of angry little teeth.
+  printer() {
+    const out = samples(0.16);
+    tone(out, { dur: 0.14, duty: 0.125, freq: (t) => (Math.floor(t * 110) % 2 ? 900 : 1400), vol: decay(0.14, 0.4, 0.4) });
+    return out;
+  },
+  // The CD tray: a motor whine and a clunk.
+  cdTray() {
+    const out = samples(0.5);
+    tone(out, { dur: 0.32, duty: 0.25, freq: sweep(180, 420, 0.32), vol: 0.3 });
+    noise(out, { t0: 0.32, dur: 0.1, short: true, rate: 3000, vol: decay(0.1, 1, 0.6) });
+    return out;
+  },
+  // Blue screen breaking up: digital static sliding upward.
+  glitchOut() {
+    const out = samples(0.7);
+    noise(out, { dur: 0.65, short: true, rate: sweep(2500, 19000, 0.65), vol: decay(0.65, 0.5, 0.55) });
+    tone(out, { dur: 0.3, duty: 0.125, freq: (t) => (Math.floor(t * 40) % 2 ? 1900 : 420), vol: decay(0.3, 0.6, 0.3) });
+    return out;
+  },
+  // Blue screen: one flat, final beep.
+  bsod() {
+    const out = samples(0.5);
+    tone(out, { dur: 0.46, duty: 0.5, freq: 440, vol: decay(0.46, 0.15, 0.5) });
+    return out;
+  },
+  infected() {
+    const out = samples(0.5);
+    tone(out, { dur: 0.45, duty: 0.25, freq: sweep(900, 160, 0.45), vol: decay(0.45, 0.5, 0.6) });
+    noise(out, { dur: 0.3, short: true, rate: 6000, vol: decay(0.3, 1, 0.3) });
+    return out;
+  },
+  infectTick() {
+    const out = samples(0.06);
+    tone(out, { dur: 0.05, duty: 0.25, freq: 1500, vol: decay(0.05, 1, 0.5) });
+    return out;
+  },
+  virusDie() {
+    const out = samples(0.25);
+    noise(out, { dur: 0.2, short: true, rate: sweep(14000, 2000, 0.2), vol: decay(0.2, 1, 0.5) });
+    return out;
+  },
+  // A desktop button going down.
+  press() {
+    const out = samples(0.05);
+    noise(out, { dur: 0.02, short: true, rate: 12000, vol: decay(0.02, 1, 0.5) });
+    tone(out, { t0: 0.015, dur: 0.02, duty: 0.25, freq: 900, vol: decay(0.02, 1, 0.25) });
+    return out;
+  },
   // Menu button.
   ui() {
     const out = samples(0.035);

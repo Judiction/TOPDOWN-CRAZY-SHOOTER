@@ -3,15 +3,15 @@
 // wins and the game win all belong to teams, keyed by color.
 // Pure logic like game.js: the host runs it, everyone else will just receive its state.
 //
-// Phases: countdown (3, 2, 1, frozen) → playing → roundEnd (banner) → next countdown ... → gameOver
+// Phases: boot (the OS loads: move but don't shoot) → playing → roundEnd (banner) → next boot ... → gameOver
 
 import {
-  ARENA, createGame, addPlayer, step, emptyInput, emit, hurtPlayer,
-  findFreeSpot, spawnPowerup, randomPowerupType, ROUND_START_POWERUPS, placeDesktop, TASKBAR_H, SCORE_WINDOW,
+  ARENA, createGame, addPlayer, step, emptyInput, emit, hurtPlayer, TASKBAR_H, SCORE_WINDOW,
 } from './game.js';
+import { startDesktop } from './stage.js';
+import { STAGES, DEFAULT_STAGE } from './stages/index.js';
 import { gameRules, teamsOf } from './settings.js';
 
-export const COUNTDOWN = 5;            // seconds of "5, 4, 3, 2, 1"
 export const GO_SHOW = 0.8;            // how long "GO!" stays on screen
 export const ROUND_END_DELAY = 3;      // seconds the round-winner banner shows before the next round
 export const SUDDEN_DEATH_TICK = 1.5;  // once the round timer runs out, everyone loses 1 HP this often
@@ -34,11 +34,12 @@ export const SPAWN_RING = [
 export function createMatch(settings, roster, { firstEventId = 1 } = {}) {
   const match = {
     settings: { ...settings },
-    roster: roster.map(({ id, name, color, isBot }) => ({ id, name, color, isBot: !!isBot })),
+    roster: roster.map(({ id, name, color, cursor, isBot }) => ({ id, name, color, cursor, isBot: !!isBot })),
     scores: Object.fromEntries(teamsOf(roster).map((t) => [t.key, 0])),   // per team (color)
     round: 0,
-    phase: 'countdown',
-    timer: 0,               // countdown / banner time left
+    phase: 'boot',
+    timer: 0,               // boot / banner time left
+    bootTime: 0,            // how long this round's boot takes in total
     roundTime: 0,           // seconds since GO
     goTimer: 0,             // > 0 while "GO!" is showing
     suddenDeath: false,
@@ -58,58 +59,55 @@ function startRound(match) {
   const game = createGame(gameRules(match.settings), {
     firstEventId: match.game ? match.game.nextEventId : match.firstEventId,
   });
-  placeDesktop(game, teamsOf(match.roster).length);
   // Teammates take neighboring spots; the whole layout rotates every round so nobody keeps a corner.
   const order = teamsOf(match.roster).flatMap((t) => t.members);
   const n = order.length;
   const turn = ((match.round - 1) * 2) % SPAWN_RING.length;
   order.forEach((r, i) => {
     const spot = SPAWN_RING[(turn + Math.floor((i * SPAWN_RING.length) / n)) % SPAWN_RING.length];
-    const p = addPlayer(game, r.id, { name: r.name, color: r.color, x: spot.x, y: spot.y });
+    const p = addPlayer(game, r.id, { name: r.name, color: r.color, cursor: r.cursor, x: spot.x, y: spot.y });
     p.aim = Math.atan2(MID_Y - spot.y, W / 2 - spot.x);
   });
-  // Every round starts with a few random powerups already on the map (unless the host turned them off).
-  if (game.rules.powerupInterval > 0) {
-    for (let i = 0; i < ROUND_START_POWERUPS; i++) {
-      const spot = findFreeSpot(game);
-      spawnPowerup(game, randomPowerupType(), spot.x, spot.y, { silent: true });
-    }
-  }
+  // The first round is a cold boot; after that the machine just restarts.
+  const stage = STAGES[match.settings.stage] || STAGES[DEFAULT_STAGE];
+  const boot = match.round === 1 ? stage.bootFull : stage.bootQuick;
   Object.assign(match, {
     game,
-    phase: 'countdown',
-    timer: COUNTDOWN,
+    phase: 'boot',
+    timer: boot,
+    bootTime: boot,
     roundTime: 0,
     goTimer: 0,
     suddenDeath: false,
     suddenTimer: 0,
-    lastCount: COUNTDOWN,
+    lastCount: boot,
     roundWinner: null,
   });
-  emit(game, 'countdown', { n: COUNTDOWN });
+  emit(game, 'boot', { full: match.round === 1 });
 }
 
-// During the countdown players can look around but not move, shoot or draw.
-function aimOnly(inputs) {
+// While the OS boots players can walk around and aim, but not shoot or draw.
+function bootInputs(inputs) {
   const out = {};
-  for (const [id, input] of Object.entries(inputs)) out[id] = { ...emptyInput(), mx: input.mx, my: input.my };
+  for (const [id, input] of Object.entries(inputs)) out[id] = { ...input, click: false, draw: false, reload: false };
   return out;
 }
 
 export function stepMatch(match, inputs, dt) {
   const game = match.game;
 
-  if (match.phase === 'countdown') {
-    step(game, aimOnly(inputs), dt);
+  if (match.phase === 'boot') {
+    step(game, bootInputs(inputs), dt);
     match.timer -= dt;
     const n = Math.ceil(match.timer);
     if (n < match.lastCount && n > 0) {
       match.lastCount = n;
-      emit(game, 'countdown', { n });
+      if (n <= 3) emit(game, 'countdown', { n });
     }
     if (match.timer <= 0) {
       match.phase = 'playing';
       match.goTimer = GO_SHOW;
+      startDesktop(game, teamsOf(match.roster).length);
       emit(game, 'go', {});
     }
     return;

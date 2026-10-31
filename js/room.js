@@ -3,6 +3,8 @@
 // be handled once networking is in (the host applies them, then shares the updated room).
 
 import { COLORS, MAX_PLAYERS, DEFAULT_SETTINGS, SETTING_DEFS, cleanName, teamCount } from './settings.js';
+import { CURSOR_IDS } from './sprites.js';
+import { WALLPAPER_IDS } from './settings.js';
 
 const BOT_NAMES = ['BLIP', 'ZORP', 'KLONK', 'BEEPO', 'GLITCH', 'PIXL', 'SPROCKET', 'NIBBLE', 'WIDGET', 'CHONK', 'ZAPP', 'BONK'];
 
@@ -18,12 +20,13 @@ export function takenColors(room, exceptId) {
 
 // Adds a player with their preferred color if it's free, otherwise the first free one.
 // Returns null when the room is full. People joining mid-match wait for the next game.
-export function addMember(room, { id, name, color, isBot = false }) {
+export function addMember(room, { id, name, color, cursor, isBot = false }) {
   if (room.players.length >= MAX_PLAYERS) return null;
   const taken = takenColors(room);
   const free = COLORS.filter((c) => !taken.has(c));
   const pick = COLORS.includes(color) && !taken.has(color) ? color : isBot ? mostDistinct(free, taken) : free[0];
-  const member = { id, name: cleanName(name), color: pick, isBot, waiting: room.inMatch };
+  const look = CURSOR_IDS.includes(cursor) ? cursor : isBot ? CURSOR_IDS[Math.floor(Math.random() * CURSOR_IDS.length)] : CURSOR_IDS[0];
+  const member = { id, name: cleanName(name), color: pick, cursor: look, isBot, waiting: room.inMatch };
   room.players.push(member);
   return member;
 }
@@ -54,6 +57,16 @@ export function applyAction(room, fromId, action) {
       // Any color, even one someone else has: same color = same team.
       if (!COLORS.includes(action.color) || me.color === action.color) return false;
       me.color = action.color;
+      return true;
+    }
+    case 'cursor': {
+      if (!CURSOR_IDS.includes(action.cursor) || me.cursor === action.cursor) return false;
+      me.cursor = action.cursor;
+      return true;
+    }
+    case 'wallpaper': {
+      if (!isHost || room.inMatch || !WALLPAPER_IDS.includes(action.wallpaper)) return false;
+      room.settings.wallpaper = action.wallpaper;
       return true;
     }
     case 'botColor': {

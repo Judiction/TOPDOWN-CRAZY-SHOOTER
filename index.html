@@ -10,9 +10,19 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <filter id="sixteen-colors" color-interpolation-filters="sRGB">
+      <feComponentTransfer>
+        <feFuncR type="discrete" tableValues="0 0.5 1"/>
+        <feFuncG type="discrete" tableValues="0 0.5 1"/>
+        <feFuncB type="discrete" tableValues="0 0.5 1"/>
+      </feComponentTransfer>
+    </filter>
+  </svg>
   <div id="screen">
     <canvas id="game"></canvas>
     <div id="ui"></div>
+    <div id="crt"></div>
   </div>
   <!-- PeerJS: browser-to-browser connections for online play -->
   <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js"></script>

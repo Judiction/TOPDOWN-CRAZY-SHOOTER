@@ -30,10 +30,21 @@ Want to play solo or fill empty seats? The host can **+ ADD BOT** in the lobby.
 
 ## Rules
 
-- **Rounds:** each round starts with a 5-second countdown. The last player alive wins the round. The first player to reach the host's number of round wins takes the game.
+- **Rounds:** each round starts with the computer booting: you can move but not shoot until the desktop appears. The last player alive wins the round. The first player to reach the host's number of round wins takes the game.
 - **Health:** you die after 10 hits. The host can change this. Eliminating a player heals you 5 HP. Players explode when they die: everyone caught in the blast takes 2 damage and nearby walls are destroyed, so watch out for chain reactions.
 - **Ammo:** 60 bullets per magazine. A reload takes 2.4 seconds.
 - **Sudden death:** if the round timer runs out, everyone slowly loses health until one player is left.
+
+### The desktop
+
+The game takes place on Winders 98, a bootleg of a late-90s computer, and it's alive. The host picks the wallpaper in **Display Properties**.
+
+- **Pop-ups:** walk on one to trigger it. Some help and some hurt. Anything offering a prize is a scam.
+- **Viruses:** one touch and you explode 6 seconds later, wrecking everything nearby. Shoot them, or hide behind walls.
+- **Start menu and clock:** stand on them and shoot to open them, then walk onto a program and shoot to launch it. Each can launch one thing per round.
+- **Other things to shoot:** the CD-ROM icon, the Recycle Bin, and the speaker and monitor in the taskbar.
+- **The computer has a mind of its own:** blue screens, flying toasters, a helpful paperclip, a runaway printer and worse. If Format starts, shoot Cancel.
+- **Desktop icons:** bullets delete them. The score window is solid and can be blown apart.
 
 ### Teams
 

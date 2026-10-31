@@ -5,8 +5,14 @@ import { COLORS, SETTING_DEFS, MAX_PLAYERS, NAME_MAX, teamsOf, teamCount } from 
 import { canStart } from './room.js';
 import { mountLogo } from './logo.js';
 import { powerupBadge } from './render.js';
+import { stagePreview } from './stage-render.js';
+import { WALLPAPERS } from './stages/wallpapers.js';
+import { CURSORS, spritePreview } from './sprites.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+// The bar across the top of every window.
+const titlebar = (text) => `<div class="titlebar"><span>${text}</span><i>X</i></div>`;
 
 function el(html) {
   const t = document.createElement('template');
@@ -42,7 +48,8 @@ export function createUI(root, handlers) {
       <div class="title-screen">
         <canvas class="logo-canvas" aria-label="Doodle Duel"></canvas>
         <p class="tagline">DRAW WALLS <i>·</i> SHOOT CURSORS <i>·</i> LAST ONE CLICKING WINS</p>
-        <div class="panel title">
+        <div class="panel title window">
+          ${titlebar('WELCOME TO DOODLE DUEL')}
           <label class="field">YOUR NAME <input id="ui-name" maxlength="${NAME_MAX}" spellcheck="false" autocomplete="off"></label>
           <div class="start-grid">
             <span></span>
@@ -52,9 +59,8 @@ export function createUI(root, handlers) {
           </div>
           <button data-act="howto" class="howto">HOW TO PLAY</button>
           <p class="msg" id="ui-msg"></p>
+          <p class="credit">VIBECODED BY @be_a_stereotype <i>-</i> <a href="https://beastereotype.com" target="_blank" rel="noopener">VISIT WEBSITE</a></p>
         </div>
-        <p class="help">WASD MOVE · MOUSE AIM · CLICK SHOOT · R RELOAD · SPACE + CLICK DRAW · M MUTE · ESC MENU</p>
-        <p class="credit">VIBECODED BY @be_a_stereotype <i>-</i> <a href="https://beastereotype.com" target="_blank" rel="noopener">VISIT WEBSITE</a></p>
       </div>`);
     mountLogo(n.querySelector('.logo-canvas'));
     const nameInput = n.querySelector('#ui-name');
@@ -85,10 +91,12 @@ export function createUI(root, handlers) {
 
   // ---- lobby ----
 
-  function showLobby(room, localId) {
+  function showLobby(room, localId, seed) {
+    previewSeed = seed;
     const n = el(`
       <div class="lobby-screen">
-        <div class="panel lobby">
+        <div class="panel lobby window">
+          ${titlebar('NETWORK NEIGHBORHOOD - LOBBY')}
           <div class="lobby-body">
           <div class="lobby-head">
             <h2>LOBBY</h2>
@@ -114,6 +122,12 @@ export function createUI(root, handlers) {
           <div id="ui-colors" class="colors">
             ${COLORS.map((c) => `<button class="swatch" data-color="${c}" style="--c:${c}" title="${c}"></button>`).join('')}
           </div>
+          <h3>YOUR CURSOR</h3>
+          <div id="ui-cursors" class="cursors">
+            ${CURSORS.map((c) => `<button class="cursor" data-cursor="${c.id}" title="${c.name}"><canvas></canvas></button>`).join('')}
+          </div>
+          <h3>WALLPAPER</h3>
+          <div class="stage-row"><b id="ui-stage"></b><button data-act="stageSelect" id="ui-stagebtn" class="small">CHANGE...</button></div>
           <h3>SETTINGS</h3>
           <div id="ui-settings" class="settings"></div>
           </div>
@@ -130,6 +144,8 @@ export function createUI(root, handlers) {
       if (!b || b.disabled) return;
       const d = b.dataset;
       if (d.color) handlers.onAction({ type: 'color', color: d.color });
+      else if (d.cursor) handlers.onAction({ type: 'cursor', cursor: d.cursor });
+      else if (d.act === 'stageSelect') showWallpapers(n);
       else if (d.act === 'pickBot') {
         botPicking = botPicking === d.id ? null : d.id;       // click the dot again to close
         updateLobby(lastRoom, lastLocalId);
@@ -151,10 +167,59 @@ export function createUI(root, handlers) {
     });
     n.querySelector('#ui-lname').addEventListener('input', (e) => handlers.onAction({ type: 'name', name: e.target.value }));
     show(n, 'lobby');
+    cursorColor = null;
     updateLobby(room, localId);
   }
 
   let lastRoom = null;
+  let previewSeed = 1;
+  let cursorColor = null;               // the color the cursor previews were last drawn in
+
+  // Display Properties: the host picks the wallpaper, shown on the little monitor.
+  function showWallpapers(lobby) {
+    lobby.querySelector('.display')?.remove();
+    let chosen = lastRoom.settings.wallpaper;
+    const choices = [{ id: 'random', name: '(RANDOM EVERY ROUND)' }, ...WALLPAPERS];
+    const n = el(`
+      <div class="panel display window">
+        ${titlebar('DISPLAY PROPERTIES')}
+        <div class="tabs"><span class="on">BACKGROUND</span><span>SCREEN SAVER</span><span>APPEARANCE</span><span>EFFECTS</span><span>WEB</span><span>SETTINGS</span></div>
+        <div class="tab-body">
+          <div class="monitor"><canvas id="ui-preview"></canvas><i class="led"></i></div>
+          <div class="stand"></div>
+          <p>WALLPAPER:</p>
+          <div class="wall-list">
+            ${choices.map((w) => `<button data-wall="${w.id}">${w.name}</button>`).join('')}
+          </div>
+        </div>
+        <div class="display-foot">
+          <button data-act="ok">OK</button><button data-act="cancel">CANCEL</button>
+        </div>
+      </div>`);
+    const paint = () => {
+      const art = stagePreview(chosen, previewSeed);
+      const c = n.querySelector('#ui-preview');
+      c.width = art.width;
+      c.height = art.height;
+      c.getContext('2d').drawImage(art, 0, 0);
+      for (const b of n.querySelectorAll('[data-wall]')) b.classList.toggle('on', b.dataset.wall === chosen);
+    };
+    n.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b || b.disabled) return;
+      if (b.dataset.wall) {
+        chosen = b.dataset.wall;
+        paint();
+      } else if (b.dataset.act === 'ok') {
+        handlers.onAction({ type: 'wallpaper', wallpaper: chosen });
+        n.remove();
+      } else if (b.dataset.act === 'cancel') n.remove();
+      e.stopPropagation();
+      handlers.onClick?.();
+    });
+    lobby.appendChild(n);
+    paint();
+  }
 
   let lastLocalId = null;
   let botPicking = null;                // id of the bot whose color picker is open (host only)
@@ -203,6 +268,20 @@ export function createUI(root, handlers) {
     const nameInput = $('#ui-lname');
     if (me && document.activeElement !== nameInput) nameInput.value = me.name;
 
+    // The cursor choices are drawn in your color, like a preview of you.
+    if (me && me.color !== cursorColor) {
+      cursorColor = me.color;
+      for (const b of root.querySelectorAll('#ui-cursors .cursor')) {
+        const art = spritePreview(b.dataset.cursor, me.color), c = b.querySelector('canvas');
+        c.width = art.width;
+        c.height = art.height;
+        c.getContext('2d').drawImage(art, 0, 0);
+      }
+    }
+    for (const b of root.querySelectorAll('#ui-cursors .cursor')) b.classList.toggle('mine', me?.cursor === b.dataset.cursor);
+    $('#ui-stage').textContent = WALLPAPERS.find((w) => w.id === room.settings.wallpaper)?.name ?? 'RANDOM';
+    $('#ui-stagebtn').hidden = !isHost || room.inMatch;
+
     $('#ui-settings').innerHTML = SETTING_DEFS.map((def) => {
       const value = esc(def.format(room.settings[def.key]));
       const control = isHost
@@ -249,9 +328,9 @@ export function createUI(root, handlers) {
     ['MAP EVENTS (HIT EVERYONE)', [
       ['eraser', 'ERASER', 'All walls vanish, pens refill'],
       ['meteor', 'METEORS', 'Get out of the flashing circles'],
-      ['blackout', 'BLACKOUT', 'Lights out'],
+      ['blackout', 'DRIVER CRASH', 'The whole screen gets censored'],
       ['gravity', 'GRAVITY WELL', 'Everything gets sucked in'],
-      ['paintbomb', 'PAINT BOMB', 'Rainbow splats: shoot them for ink'],
+      ['paintbomb', 'PAINT BOMB', 'Corrupted splats: shoot them for ink'],
       ['mirror', 'MIRROR WORLD', 'The screen flips'],
       ['inkstorm', 'INK STORM', 'Walls crumble'],
     ]],
@@ -262,7 +341,8 @@ export function createUI(root, handlers) {
     const n = el(`
       <div class="howto-screen">
         <p class="practice-hint">PRACTICE HERE! TRY MOVING, SHOOTING AND DRAWING</p>
-        <div class="panel howto">
+        <div class="panel howto window">
+          ${titlebar('HELP - HOW TO PLAY')}
           <h2>HOW TO PLAY</h2>
           <div class="howto-scroll">
             <ul class="rules">
@@ -271,6 +351,10 @@ export function createUI(root, handlers) {
               <li>${k('SPACE')}+${k('CLICK')}<span>DRAW WALLS. THEY BLOCK BULLETS AND PLAYERS.</span></li>
               <li><i class="inkbar"></i><span>DRAWING USES INK (THE BAR NEXT TO YOU). SHOOT WALLS TO GET INK BACK: IT ALWAYS RETURNS TO WHOEVER DREW THEM.</span></li>
               <li><i class="crown">★</i><span>LAST CURSOR STANDING WINS THE ROUND. KILLS HEAL +5 HP. DYING CURSORS EXPLODE!</span></li>
+              <li><i class="crown">!</i><span>WHILE THE COMPUTER BOOTS YOU CAN MOVE BUT NOT SHOOT. ICONS APPEAR WHEN THE DESKTOP DOES.</span></li>
+              <li><i class="crown">?</i><span>STAND ON THE START BUTTON OR THE CLOCK AND SHOOT TO OPEN THEM. WALK ONTO A PROGRAM AND SHOOT TO LAUNCH IT.</span></li>
+              <li><i class="crown">#</i><span>POP-UPS: WALK ON ONE TO TRIGGER IT. SOME HELP, SOME HURT. PRIZES ARE ALWAYS A SCAM.</span></li>
+              <li><i class="crown">X</i><span>VIRUSES: ONE TOUCH AND YOU EXPLODE IN 6 SECONDS, TAKING EVERYTHING NEARBY WITH YOU. SHOOT THEM OR HIDE BEHIND WALLS.</span></li>
               <li><i class="crown">◆</i><span>WALK OVER POWERUPS TO GRAB THEM:</span></li>
             </ul>
             ${HOWTO_POWERUPS.map(([title, list]) => `
@@ -321,7 +405,8 @@ export function createUI(root, handlers) {
 
   function showPause(isHost) {
     const n = el(`
-      <div class="panel pause">
+      <div class="panel pause window">
+        ${titlebar('PAUSED')}
         <h2>MENU</h2>
         <p class="help">THE GAME KEEPS RUNNING</p>
         <button data-act="resume" class="big">RESUME</button>
@@ -343,7 +428,8 @@ export function createUI(root, handlers) {
       .map((t) => `<li><span class="dot" style="--c:${t.color}"></span><span class="pname">${esc(t.name)}</span><b>${match.scores[t.key] ?? 0}</b></li>`)
       .join('');
     const n = el(`
-      <div class="panel gameover">
+      <div class="panel gameover window">
+        ${titlebar('GAME OVER')}
         <h1 class="winner" style="color:${winner?.color ?? '#fff'}">${esc(winner?.name ?? '???')}</h1>
         <h2>${winner && winner.members.length > 1 ? 'WIN THE GAME!' : 'WINS THE GAME!'}</h2>
         <ul class="players scores">${rows}</ul>

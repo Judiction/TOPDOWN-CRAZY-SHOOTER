@@ -7,12 +7,14 @@ import {
 } from './game.js';
 import {
   updateFx, shakeOffset, drawBackgroundFx, drawWallFx, drawMeteors, drawSmoke, drawTopFx,
-  drawGravity, gravityFlash, weaponKick, drawPlayerFx, drawBlackout, drawBanners, drawFloats, drawShells,
+  drawGravity, gravityFlash, weaponKick, drawPlayerFx, drawBlackout, drawFloats, drawShells,
 } from './fx.js';
-import { powerupIcon, shortcutIcon, iconCaption, tinyText } from './icons.js';
-import { createBackground, BG_W, BG_H } from './background.js';
+import { powerupIcon, shortcutIcon, iconCaption } from './icons.js';
+import { drawStageBack, drawStageMid, drawStageOver, drawStageTop, drawBoot, drawMenuDesktop, wallpaperFor } from './stage-render.js';
+import { sheetArt, keyArt } from './stages/event-art.js';
+import { drawScoreWindow, TASK_BUTTON, TRAY_W } from './stages/win98-art.js';
 import { teamsOf } from './settings.js';
-import { drawPlayerSprite, darken, muzzleDistance, spriteFor, BULLET_SPRITE } from './sprites.js';
+import { drawPlayerSprite, darken, muzzleDistance, lookFor, BULLET_SPRITE } from './sprites.js';
 import { PX, VIEW_W, VIEW_H, snap, disc, ring, drawSprite, rect, drawText, hexToRgb, textSprite } from './pixel.js';
 
 const ORPHAN_RGB = [107, 114, 128];
@@ -67,12 +69,6 @@ const wallPixels = wallCtx.createImageData(COLS, ROWS);
 let wallsDrawnVersion = -1;
 let wallCount = 0;
 const FADE_STEPS = [50, 105, 165, 220];
-// Paint bomb walls: one rainbow cycle every 96 cells along the diagonal.
-const PAINT_RAINBOW = Array.from({ length: 96 }, (_, i) => {
-  const h = (i / 96) * 6, x = 1 - Math.abs((h % 2) - 1);
-  const [r, g, b] = h < 1 ? [1, x, 0] : h < 2 ? [x, 1, 0] : h < 3 ? [0, 1, x] : h < 4 ? [0, x, 1] : h < 5 ? [x, 0, 1] : [1, 0, x];
-  return [r, g, b].map((v) => Math.round(90 + v * 165));
-});   // lobby wall opacity steps on the way out
 const PING_REACH = 150;                 // how far the start-of-round radar ping spreads (arena units)
 
 // Walls get moving white highlight bands: the walls are copied to a second small canvas each frame
@@ -84,7 +80,8 @@ const shineCtx = shineCanvas.getContext('2d');
 const SHINE_BANDS = 3;                // highlight bands across the screen at once
 const SHINE_SPEED = 0.5;              // screen widths per second
 
-// Background art: rendered into a tiny canvas at ~30fps, then scaled up with no smoothing.
+// The gravity well bends the wallpaper: it's redrawn into a tiny canvas at ~30fps while the well is open.
+const BG_W = 160, BG_H = 90;
 const BG_FRAME_MS = 1000 / 30;
 const bgCanvas = document.createElement('canvas');
 bgCanvas.width = BG_W;
@@ -92,10 +89,8 @@ bgCanvas.height = BG_H;
 const bgCtx = bgCanvas.getContext('2d');
 const bgImage = bgCtx.createImageData(BG_W, BG_H);
 const bgPixels = new Uint32Array(bgImage.data.buffer);
-let bgSeed = null;
-let bgArt = null;
-let bgStart = 0;
 let bgLastDraw = -Infinity;
+let warpSeed = null;
 
 // Hit flash: when a player is hit, the background art glows in their color (color-dodge blend),
 // instantly at peak strength, then fades out smoothly.
@@ -177,8 +172,8 @@ let lastGame = null;
 
 let lastRender = performance.now();
 
-// options: hud (ammo etc.), pattern (opacity of the spinning-cursor pattern, used in the lobby).
-export function render(ctx, game, localId, input, { hud = true, pattern = 0 } = {}) {
+// options: hud (ammo etc.), boot ({ left, total, full } while the OS is loading).
+export function render(ctx, game, localId, input, { hud = true, boot = null } = {}) {
   const now = performance.now();
   const dt = Math.min(0.1, (now - lastRender) / 1000);
   lastRender = now;
@@ -198,19 +193,21 @@ export function render(ctx, game, localId, input, { hud = true, pattern = 0 } = 
   }
 
   updateFx(game, now, wallPixels, localId);   // before drawWalls: the eraser effect needs the old walls
-  drawBackground(ctx, game.bgSeed, game.gravity);
-  if (pattern) drawCursorPattern(ctx, now / 1000, pattern);
+  if (boot) {
+    wallpaperFor(game.bgSeed, game.rules.wallpaper);   // paint it now, so the desktop appears without a hitch
+    drawBoot(ctx, boot);
+  } else if (game.stage) drawBackground(ctx, game);
+  else {
+    drawMenuDesktop(ctx, game.bgSeed, game.rules.wallpaper);
+    drawWarp(ctx, game);
+  }
+  if (!boot) drawStageBack(ctx, game);
   drawHitFlash(ctx, game);
   drawBackgroundFx(ctx, now);
   drawWalls(ctx, game);
   drawWallFx(ctx, now);
   drawShells(ctx, now, dt);            // spent shells: over the walls, under everything else
-
-  const border = '#3a3f4b';
-  rect(ctx, 0, 0, ARENA.w, PX * 2, border);
-  rect(ctx, 0, ARENA.h - PX * 2, ARENA.w, PX * 2, border);
-  rect(ctx, 0, 0, PX * 2, ARENA.h, border);
-  rect(ctx, ARENA.w - PX * 2, 0, PX * 2, ARENA.h, border);
+  if (!boot) drawStageMid(ctx, game, now);
 
   drawGravity(ctx, game, now);
   drawMeteors(ctx, game);
@@ -221,6 +218,7 @@ export function render(ctx, game, localId, input, { hud = true, pattern = 0 } = 
     drawPlayer(ctx, p, game.rules, p.id === localId, now);
   }
   drawPlayerFx(ctx, game, now, dt);
+  drawStageOver(ctx, game, now);
 
   drawSmoke(ctx, now);
   // Shots start at the player's center (so they can't skip through walls); they stay hidden until
@@ -231,6 +229,8 @@ export function render(ctx, game, localId, input, { hud = true, pattern = 0 } = 
   game.bullets.forEach((b, i) => {
     if ((b.travel ?? Infinity) < MUZZLE[b.kind] && !b.bounced) return;
     if (b.kind === 'rocket') return drawRocket(ctx, b);
+    if (b.kind === 'paper') return drawSprite(ctx, sheetArt(Math.floor(now / 90) % 2), b.x, b.y);
+    if (b.kind === 'key') return drawSprite(ctx, keyArt(), b.x, b.y);
     if (b.kind === 'flame') {
       // Flickering fire pixels.
       const fire = FLAME_COLORS[(i + Math.floor(now / 50)) % FLAME_COLORS.length];
@@ -275,7 +275,7 @@ export function render(ctx, game, localId, input, { hud = true, pattern = 0 } = 
       : game.mirror ? [x, ARENA.h / 2 + (y - ARENA.h / 2) * flip] : [x, y];
   drawFloats(ctx, game, now, localId, toScreen);
   if (me && hud) drawHud(ctx, me, game.desktop);
-  drawBanners(ctx, now);
+  drawStageTop(ctx, game, now);
 }
 
 const FLAME_COLORS = ['#fde047', '#fb923c', '#ef4444', '#fff7ae'];
@@ -286,28 +286,35 @@ const BULLET_FADE = ['#ffffe0', '#fff59a', '#ffe066', '#ffc94d', '#ffa53d', '#ff
 // SPEED BOOTS afterimages: recent positions of fast players.
 const trails = new Map();               // player id -> [{ x, y, aim, t }]
 
-function drawBackground(ctx, seed, gravity = null) {
+function drawBackground(ctx, game) {
+  ctx.drawImage(wallpaperFor(game.bgSeed, game.rules.wallpaper), 0, 0, ARENA.w, ARENA.h);
+  drawWarp(ctx, game);
+}
+
+function drawWarp(ctx, game) {
+  const gravity = game.gravity;
+  if (!gravity) return;
   const now = performance.now();
-  if (seed !== bgSeed) {
-    bgSeed = seed;
-    bgArt = createBackground(seed);
-    bgStart = now;
-    bgLastDraw = -Infinity;
+  const seed = game.bgSeed;
+  if (seed !== warpSeed) {
+    // A small copy of the wallpaper for the warp to sample from.
+    warpSeed = seed;
+    const small = document.createElement('canvas');
+    small.width = BG_W;
+    small.height = BG_H;
+    const g = small.getContext('2d');
+    g.drawImage(wallpaperFor(seed, game.rules.wallpaper), 0, 0, BG_W, BG_H);
+    bgWarpSrc.set(new Uint32Array(g.getImageData(0, 0, BG_W, BG_H).data.buffer));
   }
   if (now - bgLastDraw >= BG_FRAME_MS) {
-    if (gravity) {
-      bgArt.draw(bgWarpSrc, (now - bgStart) / 1000);
-      warpBackground(gravity, now);
-    } else {
-      bgArt.draw(bgPixels, (now - bgStart) / 1000);
-    }
+    warpBackground(gravity, now);
     bgCtx.putImageData(bgImage, 0, 0);
     bgLastDraw = now;
   }
   ctx.drawImage(bgCanvas, 0, 0, ARENA.w, ARENA.h);
 }
 
-// GRAVITY WELL: the background art gets sucked into the hole. Each background pixel samples the art
+// GRAVITY WELL: the wallpaper gets sucked into the hole. Each pixel near the well samples the art
 // from farther out and twisted around the center (a pinch + a swirl that winds tighter the longer
 // the well lasts), darkening toward the core and flushing red in time with the core's flashes.
 // A 160x90 remap at 30fps, so it costs next to nothing.
@@ -324,7 +331,7 @@ function warpBackground(g, now) {
       const r = Math.hypot(dx, dy);
       const i = y * BG_W + x;
       if (r >= WARP_REACH) {
-        bgPixels[i] = bgWarpSrc[i];
+        bgPixels[i] = 0;                // out of reach: the sharp wallpaper shows through
         continue;
       }
       const f = (1 - r / WARP_REACH) ** 2;
@@ -373,21 +380,21 @@ function drawWalls(ctx, game) {
     // In the lobby, cells fade out in a few hard steps as they near the end of their life.
     const colors = {};
     for (const p of Object.values(game.players)) colors[p.slot] = hexToRgb(p.color);
-    const paintCols = COLS;
     const d = wallPixels.data;
-    let count = 0;
+    let count = 0, noisy = 0;
     for (let i = 0; i < game.walls.length; i++) {
       const o = i * 4;
       const slot = game.walls[i];
-      // Paint bomb cells: a diagonal rainbow across the whole arena.
-      const rgb = slot === PAINT_SLOT ? PAINT_RAINBOW[((i % paintCols) + Math.floor(i / paintCols)) % PAINT_RAINBOW.length]
-        : colors[slot] || ORPHAN_RGB;
+      const rgb = colors[slot] || ORPHAN_RGB;
       d[o] = rgb[0];
       d[o + 1] = rgb[1];
       d[o + 2] = rgb[2];
       const desk = slot === DESK_SLOT;
       deskMask.data[o + 3] = desk ? 255 : 0;
-      let alpha = slot && !desk ? 255 : 0;
+      const corrupt = slot === PAINT_SLOT;
+      noiseMask.data[o + 3] = corrupt ? 255 : 0;
+      if (corrupt) noisy++;
+      let alpha = slot && !desk && !corrupt ? 255 : 0;
       if (alpha && game.wallTimes) {
         const left = LOBBY_WALL_LIFE - (game.time - game.wallTimes[i]);
         if (left < LOBBY_WALL_FADE) alpha = FADE_STEPS[Math.max(0, Math.min(3, Math.floor((left / LOBBY_WALL_FADE) * 4)))];
@@ -398,8 +405,11 @@ function drawWalls(ctx, game) {
     wallCtx.putImageData(wallPixels, 0, 0);
     wallsDrawnVersion = game.wallsVersion;
     wallCount = count;
+    noiseCount = noisy;
+    if (noisy) noiseMaskCtx.putImageData(noiseMask, 0, 0);
     if (game.desktop) composeDesk(game.desktop);
   }
+  if (noiseCount) drawNoise(ctx);
   if (game.desktop) ctx.drawImage(deskCanvas, 0, 0, ARENA.w, ARENA.h);
   if (!wallCount) return;
   shineCtx.globalCompositeOperation = 'copy';
@@ -421,8 +431,57 @@ function drawWalls(ctx, game) {
 // A powerup is a desktop shortcut: the icon hovers over its file-name caption, gently bobbing and
 // swaying (each one on its own rhythm) so it reads as something to grab. Its shadow on the caption
 // shrinks as it rises. Three small images per powerup.
-const HOVER_BOB = 2.5;                  // screen pixels up and down
-const HOVER_SWAY = 1.2;                 // screen pixels side to side
+const HOVER_BOB = 5;                    // screen pixels up and down
+const HOVER_SWAY = 4;                   // screen pixels side to side
+// ---- paint bomb walls: corrupted pixels ----
+// A tile of random greys, cut down to the splats and nudged around a few times a second, so the
+// static crawls in place like a bad signal. Only the nudge costs anything, and only when it's needed.
+const NOISE_TILE = 64;
+const NOISE_MS = 90;
+const NOISE_DRIFT = 5;                  // cells it can wander from its resting spot
+const noiseMaskCanvas = document.createElement('canvas');
+noiseMaskCanvas.width = COLS;
+noiseMaskCanvas.height = ROWS;
+const noiseMaskCtx = noiseMaskCanvas.getContext('2d');
+const noiseMask = noiseMaskCtx.createImageData(COLS, ROWS);
+const noiseCanvas = document.createElement('canvas');
+noiseCanvas.width = COLS;
+noiseCanvas.height = ROWS;
+const noiseCtx = noiseCanvas.getContext('2d');
+let noiseCount = 0, nextNoise = 0, noisePattern = null, noiseDrawn = -1;
+
+function makeNoisePattern() {
+  const tile = document.createElement('canvas');
+  tile.width = tile.height = NOISE_TILE;
+  const g = tile.getContext('2d');
+  const greys = ['#101010', '#404040', '#6a6a6a', '#808080', '#a8a8a8', '#c0c0c0', '#f0f0f0'];
+  for (let y = 0; y < NOISE_TILE; y++) {
+    for (let x = 0; x < NOISE_TILE; x++) {
+      g.fillStyle = greys[Math.floor(Math.random() * greys.length)];
+      g.fillRect(x, y, 1, 1);
+    }
+  }
+  return noiseCtx.createPattern(tile, 'repeat');
+}
+
+function drawNoise(ctx) {
+  const now = performance.now();
+  if (now >= nextNoise || noiseDrawn !== wallsDrawnVersion) {
+    nextNoise = now + NOISE_MS;
+    noiseDrawn = wallsDrawnVersion;
+    noisePattern ??= makeNoisePattern();
+    const ox = Math.floor(Math.random() * NOISE_DRIFT), oy = Math.floor(Math.random() * NOISE_DRIFT);
+    noiseCtx.globalCompositeOperation = 'copy';
+    noiseCtx.fillStyle = noisePattern;
+    noiseCtx.setTransform(1, 0, 0, 1, ox, oy);
+    noiseCtx.fillRect(-NOISE_DRIFT, -NOISE_DRIFT, COLS + NOISE_DRIFT * 2, ROWS + NOISE_DRIFT * 2);
+    noiseCtx.setTransform(1, 0, 0, 1, 0, 0);
+    noiseCtx.globalCompositeOperation = 'destination-in';
+    noiseCtx.drawImage(noiseMaskCanvas, 0, 0);
+  }
+  ctx.drawImage(noiseCanvas, 0, 0, ARENA.w, ARENA.h);
+}
+
 // ---- the desktop set pieces ----
 // The taskbar and the score window are breakable walls (DESK_SLOT cells, see game.js) drawn as
 // Windows 98 UI: the full-resolution art is cut down to whichever cells are still standing, so
@@ -438,16 +497,10 @@ deskCanvas.height = VIEW_H;
 const deskCtx = deskCanvas.getContext('2d');
 let deskArt = null, deskArtKey = '';
 
-const W98 = { face: '#c0c0c0', light: '#dfdfdf', white: '#ffffff', shadow: '#808080', dark: '#000000', navy: '#000080', blue: '#1084d0' };
-const CONTROLS_TEXT = 'WASD MOVE  CLICK SHOOT  R RELOAD  SPACE+CLICK DRAW  M MUTE  ESC MENU';
-// Where the HUD goes on the taskbar (screen pixels).
-const TASK_BUTTON = { x: 60, w: 150 };
-const TRAY_W = 92;
-
 function composeDesk(desk) {
   const key = JSON.stringify(desk);
   if (key !== deskArtKey) {
-    deskArt = drawDeskArt(desk);
+    deskArt = drawScoreWindow(desk.win, SCORE_WINDOW.top);
     deskArtKey = key;
   }
   deskMaskCtx.putImageData(deskMask, 0, 0);
@@ -459,135 +512,13 @@ function composeDesk(desk) {
   deskCtx.globalCompositeOperation = 'source-over';
 }
 
-function drawDeskArt(desk) {
-  const c = document.createElement('canvas');
-  c.width = VIEW_W;
-  c.height = VIEW_H;
-  const g = c.getContext('2d');
-  const fill = (x, y, w, h, color) => {
-    g.fillStyle = color;
-    g.fillRect(x, y, w, h);
-  };
-  // Win98 3D edges: raised = light top-left / dark bottom-right; sunken = the reverse.
-  const raised = (x, y, w, h) => {
-    fill(x, y, w, h, W98.face);
-    fill(x, y, w, 1, W98.white);
-    fill(x, y, 1, h, W98.white);
-    fill(x, y + h - 1, w, 1, W98.dark);
-    fill(x + w - 1, y, 1, h, W98.dark);
-    fill(x + 1, y + h - 2, w - 2, 1, W98.shadow);
-    fill(x + w - 2, y + 1, 1, h - 2, W98.shadow);
-  };
-  const sunken = (x, y, w, h, face) => {
-    fill(x, y, w, h, face);
-    fill(x, y, w, 1, W98.shadow);
-    fill(x, y, 1, h, W98.shadow);
-    fill(x, y + h - 1, w, 1, W98.white);
-    fill(x + w - 1, y, 1, h, W98.white);
-  };
-
-  // ---- taskbar ----
-  const by = Math.round(desk.bar.y / PX), bh = Math.round(desk.bar.h / PX), bw = VIEW_W;
-  fill(0, by, bw, bh, W98.face);
-  fill(0, by, bw, 1, W98.light);
-  fill(0, by + 1, bw, 1, W98.white);
-  // Start button: the four-color flag + START.
-  const sy = by + 3, sh = bh - 5;
-  raised(2, sy, 52, sh);
-  const fy = sy + Math.floor((sh - 9) / 2);
-  fill(6, fy, 4, 4, '#ff0000');
-  fill(11, fy, 4, 4, '#00a000');
-  fill(6, fy + 5, 4, 4, '#0000ff');
-  fill(11, fy + 5, 4, 4, '#ffd000');
-  const start = textSprite('START', 8, '#000000', null);
-  g.drawImage(start, 18, sy + Math.floor((sh - start.height) / 2) + 1);
-  // Separator, then the pressed-in task button the ammo counter sits on (dithered = "active").
-  fill(57, sy, 1, sh, W98.shadow);
-  fill(58, sy, 1, sh, W98.white);
-  sunken(TASK_BUTTON.x, sy, TASK_BUTTON.w, sh, W98.face);
-  for (let y = sy + 1; y < sy + sh - 1; y++) {
-    for (let x = TASK_BUTTON.x + 1 + ((y + sy) % 2); x < TASK_BUTTON.x + TASK_BUTTON.w - 1; x += 2) fill(x, y, 1, 1, W98.white);
-  }
-  fill(TASK_BUTTON.x, sy, TASK_BUTTON.w, 1, W98.dark);
-  fill(TASK_BUTTON.x, sy, 1, sh, W98.dark);
-  // The controls, in small print across the middle of the taskbar.
-  const trayX = bw - TRAY_W - 3;
-  const textW = CONTROLS_TEXT.length * 4 - 1;
-  const midL = TASK_BUTTON.x + TASK_BUTTON.w + 6, midR = trayX - 6;
-  if (textW <= midR - midL) tinyText(g, CONTROLS_TEXT, Math.round((midL + midR - textW) / 2), by + Math.floor((bh - 5) / 2) + 1, '#000000');
-  // System tray: a sunken box with a little speaker; the clock is drawn on top by the HUD.
-  sunken(trayX, sy, TRAY_W, sh, W98.face);
-  const spx = trayX + 4, spy = sy + Math.floor((sh - 7) / 2);
-  fill(spx, spy + 2, 2, 3, '#000000');
-  fill(spx + 2, spy + 1, 1, 5, '#000000');
-  fill(spx + 3, spy, 1, 7, '#000000');
-  fill(spx + 5, spy + 2, 1, 1, '#808080');
-  fill(spx + 6, spy + 1, 1, 1, '#808080');
-  fill(spx + 5, spy + 4, 1, 1, '#808080');
-  fill(spx + 6, spy + 5, 1, 1, '#808080');
-  fill(spx + 6, spy + 3, 1, 1, '#808080');
-
-  // ---- score window ----
-  const wx = Math.round(desk.win.x / PX), wy = Math.round(desk.win.y / PX);
-  const ww = Math.round(desk.win.w / PX), wh = Math.round(desk.win.h / PX);
-  fill(wx, wy, ww, wh, W98.face);
-  fill(wx, wy, ww, 1, W98.light);
-  fill(wx, wy, 1, wh, W98.light);
-  fill(wx + 1, wy + 1, ww - 2, 1, W98.white);
-  fill(wx + 1, wy + 1, 1, wh - 2, W98.white);
-  fill(wx, wy + wh - 1, ww, 1, W98.dark);
-  fill(wx + ww - 1, wy, 1, wh, W98.dark);
-  fill(wx + 1, wy + wh - 2, ww - 2, 1, W98.shadow);
-  fill(wx + ww - 2, wy + 1, 1, wh - 2, W98.shadow);
-  // Title bar: navy fading to blue, the file name, and the three little buttons.
-  const tx = wx + 3, ty = wy + 3, tw = ww - 6, th = 11;
-  for (let i = 0; i < tw; i++) {
-    const k = i / (tw - 1);
-    const r = Math.round(0x00 + (0x10 - 0x00) * k), gg = Math.round(0x00 + (0x84 - 0x00) * k), b = Math.round(0x80 + (0xd0 - 0x80) * k);
-    fill(tx + i, ty, 1, th, `rgb(${r},${gg},${b})`);
-  }
-  // A tiny "notepad" icon, then the title.
-  fill(tx + 2, ty + 2, 6, 7, W98.white);
-  fill(tx + 3, ty + 4, 4, 1, W98.shadow);
-  fill(tx + 3, ty + 6, 4, 1, W98.shadow);
-  tinyText(g, 'SCORES.TXT', tx + 11, ty + 3, '#ffffff');
-  const button = (x, y, glyph) => {
-    raised(x, y, 9, 8);
-    g.fillStyle = '#000000';
-    if (glyph === 'min') g.fillRect(x + 2, y + 5, 4, 1);
-    else if (glyph === 'max') {
-      g.fillRect(x + 2, y + 1, 5, 2);      // thick top edge, like the real maximize box
-      g.fillRect(x + 2, y + 2, 1, 4);
-      g.fillRect(x + 6, y + 2, 1, 4);
-      g.fillRect(x + 2, y + 5, 5, 1);
-    } else {
-      for (let i = 0; i < 4; i++) {
-        g.fillRect(x + 2 + i, y + 2 + i, 1, 1);
-        g.fillRect(x + 5 - i, y + 2 + i, 1, 1);
-        g.fillRect(x + 3 + i, y + 2 + i, 1, 1);
-        g.fillRect(x + 6 - i, y + 2 + i, 1, 1);
-      }
-    }
-  };
-  const bx = tx + tw - 2 - 9;
-  button(bx, ty + 1, 'close');
-  button(bx - 11, ty + 1, 'max');
-  button(bx - 20, ty + 1, 'min');
-  // The page the scores are written on.
-  const top = wy + Math.round(SCORE_WINDOW.top / PX) - 2;
-  sunken(wx + 3, top, ww - 6, wy + wh - 3 - top, '#ffffff');
-  fill(wx + 4, top + 1, ww - 8, 1, W98.dark);
-  fill(wx + 4, top + 1, 1, wy + wh - 5 - top, W98.dark);
-  return c;
-}
-
 function drawPowerup(ctx, u, now) {
   const icon = shortcutIcon(u.type);
   if (!icon) return;
   const t = now / 1000 + u.id * 1.37;
-  const bob = Math.sin(t * 2.6);        // -1 (low) .. 1 (high)
-  const ix = u.x + Math.sin(t * 1.3) * HOVER_SWAY * PX;
-  const iy = u.y - 4 * PX - bob * HOVER_BOB * PX;
+  const bob = Math.sin(t * 3.4);        // -1 (low) .. 1 (high)
+  const ix = u.x + Math.sin(t * 1.9) * HOVER_SWAY * PX;
+  const iy = u.y - 6 * PX - bob * HOVER_BOB * PX;
   const caption = iconCaption(u.type);
   const half = (caption.width / 2) * PX;
   const cx = Math.max(half, Math.min(ARENA.w - half, u.x));
@@ -614,6 +545,8 @@ function drawRocket(ctx, b) {
 
 // ---- player sprite: the pointing hand (see sprites.js) ----
 
+const GUN_REACH = 8;                    // how far ahead of a cursor's middle its gun sits (arena units)
+
 function drawCursor(ctx, x, y, angle, radius, color, sprite = 'hand') {
   // (sprite: 'hand', or the weapon held — see sprites.js)
   drawPlayerSprite(ctx, sprite, x, y, angle, radius, color);
@@ -626,7 +559,7 @@ function drawPlayer(ctx, p, rules, isMe, now) {
   let trail = trails.get(p.id);
   if (p.alive && p.speed > 0) {
     if (!trail) trails.set(p.id, (trail = []));
-    trail.push({ x: p.x, y: p.y, aim: p.aim, t: now, sprite: spriteFor(p.weapon) });
+    trail.push({ x: p.x, y: p.y, aim: p.aim, t: now, sprite: lookFor(p.cursor, p.weapon).body });
   }
   if (trail) {
     while (trail.length && now - trail[0].t > 260) trail.shift();
@@ -645,7 +578,14 @@ function drawPlayer(ctx, p, rules, isMe, now) {
   // Firing kicks the sprite back along the aim line for a moment.
   const kick = p.alive ? weaponKick(p.id, now) : null;
   const kx = kick ? -Math.cos(p.aim) * kick.back : 0, ky = kick ? -Math.sin(p.aim) * kick.back : 0;
-  drawCursor(ctx, p.x + kx, p.y + ky, p.aim - (kick ? kick.tip : 0), r, hit ? '#ffffff' : p.color, spriteFor(p.weapon));
+  // Infected: green flashes that get faster and faster until it blows.
+  const sick = p.alive && p.infected > 0 && Math.floor(now / (35 + (p.infected / 6) * 260)) % 2 === 0;
+  const tint = hit ? '#ffffff' : sick ? '#39ff14' : p.color;
+  const look = lookFor(p.cursor, p.weapon);
+  const angle = p.aim - (kick ? kick.tip : 0);
+  drawCursor(ctx, p.x + kx, p.y + ky, angle, r, tint, look.body);
+  if (look.gun) drawCursor(ctx, p.x + kx + Math.cos(angle) * GUN_REACH, p.y + ky + Math.sin(angle) * GUN_REACH, angle, r, tint, look.gun);
+  if (p.alive && p.frozen > 0) drawText(ctx, 'WAIT...', p.x, p.y - r - 26, { color: '#ffff66', align: 'center', valign: 'bottom' });
   ctx.globalAlpha = 1;
 
   if (!p.alive) return;
@@ -730,6 +670,8 @@ function drawPenCursor(ctx, me, input) {
   drawSprite(ctx, ring(r, color), input.mx, input.my);
 }
 
+const EFFECT_NAMES = [['slow', 'LOW MEMORY'], ['frozen', 'INSTALLING'], ['invert', 'INVERTED'], ['jam', 'GUN CRASHED'], ['immune', 'PROTECTED'], ['freeAmmo', 'FREE AMMO'], ['rapid', 'RAPID FIRE']];
+
 function drawHud(ctx, me, desk) {
   if (!me.alive) return;
   // Ammo, bottom-left: the powerup weapon if you have one, otherwise the pistol magazine. In a match
@@ -746,6 +688,10 @@ function drawHud(ctx, me, desk) {
       color = '#facc15';
     }
     drawText(ctx, text, x, y, { size: 8, color, valign: 'middle' });
+    // Active pop-up effects, written over the middle of the taskbar.
+    const active = EFFECT_NAMES.filter(([k]) => me[k] > 0).map(([k, n]) => `${n} ${me[k].toFixed(1)}`);
+    if (me.infected > 0) active.unshift(`INFECTED ${me.infected.toFixed(1)}`);
+    if (active.length) drawText(ctx, active.join('   '), (TASK_BUTTON.x + TASK_BUTTON.w + 8) * PX, y, { size: 8, color: me.infected > 0 ? '#39ff14' : '#ffff66', valign: 'middle' });
     if (me.ricochet > 0) {
       drawText(ctx, `RICOCHET x${me.ricochet}`, 16, desk.bar.y - 8, { size: 16, color: POWERUP_STYLE.ricochet.fill, valign: 'bottom' });
     }
@@ -769,43 +715,14 @@ function drawHud(ctx, me, desk) {
 
 }
 
-// Menus: the generative art with a drifting pattern of spinning cursors over it.
-export function renderBackdrop(ctx, seed) {
+// Menus: the desktop itself, with nothing fighting on it yet.
+export function renderBackdrop(ctx, seed, wallpaper = 'random') {
   ctx.setTransform(1 / PX, 0, 0, 1 / PX, 0, 0);
   ctx.imageSmoothingEnabled = false;
-  drawBackground(ctx, seed);
-  drawCursorPattern(ctx, performance.now() / 1000);
+  drawMenuDesktop(ctx, seed, wallpaper);
 }
 
-// 60-frame sprite sheet (10 x 6 frames of 32 px) of a cursor spinning on its axis.
-const spinSheet = new Image();
-spinSheet.src = 'assets/cursor-spin.png';
-const SPIN_FRAMES = 60, SPIN_COLS = 10, SPIN_SIZE = 32;
-const SPIN_SPACING = 100;             // arena units between cursors
-const SPIN_FPS = 24;
-
-function drawCursorPattern(ctx, t, opacity = 0.5) {
-  if (!spinSheet.complete || !spinSheet.naturalWidth) return;
-  const S = SPIN_SPACING, size = SPIN_SIZE * PX;
-  // The whole grid drifts diagonally; each cursor is a few frames behind its neighbor, so the
-  // spinning ripples across the screen in waves. Every cursor has a fixed place in an endless grid
-  // (col, row are absolute, not per-screen), so nothing jumps when the drift scrolls past a cell.
-  const shiftX = t * 18, shiftY = t * 10;
-  const row0 = Math.floor(-shiftY / S) - 1, row1 = Math.ceil((ARENA.h - shiftY) / S) + 1;
-  ctx.globalAlpha = opacity;
-  for (let row = row0; row <= row1; row++) {
-    const stagger = row & 1 ? S / 2 : 0;
-    const col0 = Math.floor((-shiftX - stagger) / S) - 1, col1 = Math.ceil((ARENA.w - shiftX - stagger) / S) + 1;
-    for (let col = col0; col <= col1; col++) {
-      const x = snap(col * S + shiftX + stagger), y = snap(row * S + shiftY);
-      const f = (((Math.floor(t * SPIN_FPS) + col * 3 + row * 7) % SPIN_FRAMES) + SPIN_FRAMES) % SPIN_FRAMES;
-      ctx.drawImage(spinSheet, (f % SPIN_COLS) * SPIN_SIZE, Math.floor(f / SPIN_COLS) * SPIN_SIZE, SPIN_SIZE, SPIN_SIZE, x - size / 2, y - size / 2, size, size);
-    }
-  }
-  ctx.globalAlpha = 1;
-}
-
-// ---- match overlay: scoreboard, round, timer, countdown, banners ----
+// ---- match overlay: scoreboard, round, timer ----
 
 export function renderMatchHud(ctx, match, localId) {
   ctx.setTransform(1 / PX, 0, 0, 1 / PX, 0, 0);   // the HUD doesn't shake
@@ -818,9 +735,10 @@ export function renderMatchHud(ctx, match, localId) {
   // Top-left: one row per team (a solo player is a team of one) with its rounds won.
   const teams = teamsOf(match.roster);
   const desk = game.desktop;
+  const booting = match.phase === 'boot';
   let y = desk ? desk.win.y + SCORE_WINDOW.top + 2 : 14;
   ctx.globalAlpha = under(0, 0, 270, 30 + teams.length * 22) ? 0.3 : 1;
-  for (const t of teams) {
+  for (const t of booting ? [] : teams) {
     const alive = t.members.some((r) => game.players[r.id]?.alive);
     rect(ctx, 16, y + 4, 10, 10, BAR_BG);
     rect(ctx, 18, y + 6, 6, 6, alive ? t.color : darken(t.color));
@@ -833,16 +751,20 @@ export function renderMatchHud(ctx, match, localId) {
   // Top-center: round number, then the clock (or the sudden death warning).
   const cx = ARENA.w / 2;
   ctx.globalAlpha = under(cx - 140, 0, cx + 140, 110) ? 0.3 : 1;
-  drawText(ctx, `ROUND ${match.round}`, cx, 12, { size: 16, align: 'center' });
-  drawText(ctx, `FIRST TO ${match.settings.roundsToWin} WINS`, cx, 52, { color: '#d1d5db', align: 'center' });
+  if (!booting) {
+    drawText(ctx, `ROUND ${match.round}`, cx, 12, { size: 16, align: 'center' });
+    drawText(ctx, `FIRST TO ${match.settings.roundsToWin} WINS`, cx, 52, { color: '#d1d5db', align: 'center' });
+  }
   // The clock: on the taskbar tray in a match (like the Windows clock), else under the round number.
   const clockX = desk ? (VIEW_W - 3 - TRAY_W / 2 + 5) * PX : cx;
   const clockY = desk ? desk.bar.y + desk.bar.h / 2 + PX * 2 : 74;
   const clockStyle = { align: 'center', valign: desk ? 'middle' : 'top' };
   if (desk) ctx.globalAlpha = 1;
-  if (match.suddenDeath) {
+  if (booting) {
+    // Nothing to show until the OS is up.
+  } else if (match.suddenDeath) {
     if (Math.floor(performance.now() / 300) % 2 === 0) drawText(ctx, 'SUDDEN DEATH', clockX, clockY, { ...clockStyle, color: '#f87171' });
-  } else if (match.settings.roundTime > 0 && match.phase !== 'countdown') {
+  } else if (match.settings.roundTime > 0) {
     const left = Math.max(0, Math.ceil(match.settings.roundTime - match.roundTime));
     const clock = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
     drawText(ctx, clock, clockX, clockY, { ...clockStyle, color: left <= 10 ? '#f87171' : '#ffffff' });
@@ -854,10 +776,10 @@ export function renderMatchHud(ctx, match, localId) {
 
   ctx.globalAlpha = 1;
 
-  // Radar ping: during the countdown, rings ripple out from YOUR cursor once per beep so you can spot
+  // Radar ping: during the boot, rings ripple out from YOUR cursor once per second so you can spot
   // where you spawned. Drawn only on your own screen (localId), nothing goes over the network.
   const meNow = game.players[localId];
-  if (match.phase === 'countdown' && meNow?.alive) {
+  if (booting && meNow?.alive) {
     const n = Math.max(1, Math.ceil(match.timer));
     const beat = Math.min(1, Math.max(0, n - match.timer));     // 0 → 1 through this second
     // A bold ring each beep, plus a thinner one trailing just behind it.
@@ -876,18 +798,9 @@ export function renderMatchHud(ctx, match, localId) {
     ctx.globalAlpha = 1;
   }
 
-  // Center: countdown, GO!, round result.
+  // Center: GO!, round result.
   const cy = ARENA.h / 2;
-  if (match.phase === 'countdown') {
-    // Each number slams in big and shrinks fast (ease-out), then fades just before the next one.
-    const n = Math.max(1, Math.ceil(match.timer));
-    const k = Math.min(1, Math.max(0, n - match.timer));       // 0 → 1 through this second
-    const e = 1 - (1 - Math.min(1, k / 0.35)) ** 3;
-    ctx.globalAlpha = k > 0.85 ? (1 - k) / 0.15 : 1;
-    const color = n <= 1 ? '#f87171' : n <= 3 ? '#fde047' : '#ffffff';
-    drawText(ctx, `${n}`, cx, cy, { size: 16, scale: 10 - 6 * e, color, align: 'center', valign: 'middle' });
-    ctx.globalAlpha = 1;
-  } else if (match.goTimer > 0) {
+  if (match.goTimer > 0) {
     const k = 1 - match.goTimer / 0.8;
     const e = 1 - (1 - Math.min(1, k / 0.3)) ** 3;
     ctx.globalAlpha = k > 0.75 ? (1 - k) / 0.25 : 1;
@@ -905,9 +818,9 @@ export function renderMatchHud(ctx, match, localId) {
   }
 
   const me = game.players[localId];
-  // During the countdown, remind players who's on their team.
+  // During the boot, remind players who's on their team.
   const myTeam = me && teams.find((t) => t.key === me.color);
-  if (match.phase === 'countdown' && myTeam && myTeam.members.length > 1) {
+  if (booting && myTeam && myTeam.members.length > 1) {
     const mates = myTeam.members.filter((r) => r.id !== localId).map((r) => r.name).join(' & ');
     drawText(ctx, `YOUR TEAM: ${mates}`, cx, ARENA.h - 20, { color: myTeam.color, align: 'center', valign: 'bottom' });
   }

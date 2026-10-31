@@ -14,7 +14,7 @@ const MAX_NEW_SOUNDS_PER_FRAME = 12;
 // Group name → max overlapping voices (oldest is cut when full) and min seconds between starts.
 const LIMITS = { shoot: 10, hit: 6, wall: 4, bounce: 4, shield: 4, pickup: 3, death: 3, explode: 4, meteorTick: 3 };
 const DEFAULT_LIMIT = 3;
-const MIN_GAP = { shoot: 0.012, wall: 0.025, bounce: 0.03, shield: 0.03, flame: 0.05, dry: 0.04 };
+const MIN_GAP = { ding: 0.2, chord: 0.2, shoot: 0.012, wall: 0.025, bounce: 0.03, shield: 0.03, flame: 0.05, dry: 0.04 };
 const GROUP = { shootRicochet: 'shoot', shotgun: 'shoot', uzi: 'shoot', rocket: 'shoot', sniper: 'shoot', grenade: 'shoot', laser: 'shoot', shieldBreak: 'shield', meteorBoom: 'explode' };
 const groupOf = (name) => GROUP[name] || name.split('_')[0];
 
@@ -137,6 +137,8 @@ function play(name, x, { rate = 1, gain = 1 } = {}) {
   list.push({ src, end: now + buf.duration / rate });
 }
 
+const EVENT_SOUND = { dialup: 'modem', bsod: 'bsod', solitaire: 'startup', tray: 'cdTray', toasters: 'ding', clip: 'ding', ape: 'ding', display: 'glitchOut', formatStop: 'press' };
+
 // Small random pitch wobble so rapid-fire repeats don't sound like a machine gun of identical clips.
 const jitter = (amount) => 1 + (Math.random() * 2 - 1) * amount;
 
@@ -171,7 +173,27 @@ function onEvent(e) {
     case 'dry': play('dry', e.x, { gain: 0.6 }); break;
     case 'reloaded': play('reloaded', e.x, { gain: 0.5 }); break;
     case 'countdown': play('count', null, { gain: 0.6 }); break;
-    case 'go': play('go', null, { gain: 0.6 }); break;
+    case 'go':
+      play('go', null, { gain: 0.6 });
+      play('startup', null, { gain: 0.7 });
+      break;
+    case 'boot': play('postBeep', null, { gain: 0.5 }); break;
+    case 'bsodOut': play('glitchOut', null, { gain: 0.8 }); break;
+    case 'popupOpen': play(e.good ? 'ding' : 'chord', e.x, { gain: 0.3 }); break;
+    case 'popup': play(e.good ? 'popupGood' : 'chord', e.x, { gain: 0.6 }); break;
+    case 'infected': play('infected', e.x, { gain: 0.8 }); break;
+    case 'virusBlast': play('meteorBoom', e.x, { gain: 1 }); break;
+    case 'virusDie': play('virusDie', e.x, { gain: 0.6 }); break;
+    case 'virusSpawn': play('spawn', e.x, { gain: 0.5 }); break;
+    case 'press': play('press', e.x, { gain: 0.7 }); break;
+    case 'menuOpen': play('ding', null, { gain: 0.4 }); break;
+    case 'appOpen': play('press', null, { gain: 0.4 }); break;
+    case 'printed': play('printer', e.x, { rate: jitter(0.06), gain: 0.4 }); break;
+    case 'toasted': play('hit', e.x, { gain: 0.5 }); break;
+    case 'program': play('ui', null, { gain: 0.6 }); break;
+    case 'stageEvent':
+      play(EVENT_SOUND[e.name] || 'chord', null, { gain: 0.6 });
+      break;
     case 'suddenDeath': play('suddenDeath', null, { gain: 0.6 }); break;
     case 'roundEnd': play('roundEnd', null, { gain: 0.6 }); break;
     case 'gameOver': play('gameOver', null, { gain: 0.6 }); break;
@@ -202,6 +224,7 @@ export function updateAudio(game) {
 
   updatePens(game);
   updateMeteorBeeps(game);
+  updateInfectionBeeps(game);
   updateMusic(game.bgSeed);
 }
 
@@ -220,6 +243,25 @@ function updateMeteorBeeps(game) {
     meteorBeeps.set(m.id, n);
   }
   for (const id of meteorBeeps.keys()) if (!live.has(id)) meteorBeeps.delete(id);
+}
+
+// ---- infected players tick faster and faster as they run out of time ----
+
+const infectBeat = new Map();         // player id -> time of the last tick
+
+function updateInfectionBeeps(game) {
+  const now = ctx.currentTime;
+  for (const p of Object.values(game.players)) {
+    if (!p.alive || !(p.infected > 0)) {
+      infectBeat.delete(p.id);
+      continue;
+    }
+    const gap = 0.05 + (p.infected / 6) * 0.45;
+    if (now - (infectBeat.get(p.id) ?? 0) >= gap) {
+      infectBeat.set(p.id, now);
+      play('infectTick', p.x, { rate: 1 + (1 - p.infected / 6), gain: 0.5 });
+    }
+  }
 }
 
 // ---- pencil scratch: one looping voice per drawing player, volume follows pen speed ----

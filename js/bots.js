@@ -51,9 +51,16 @@ export function botInput(game, id, brain, dt) {
   // ---- movement ----
   let mx = 0, my = 0;
   const powerup = nearestPowerup(game, p, 260);
-  const danger = (game.meteors || []).find((m) => Math.hypot(p.x - m.x, p.y - m.y) < m.r + 40);
-  if (danger) {
-    // Get out of a meteor's landing zone.
+  const stage = game.stage;
+  const danger = (game.meteors || []).find((m) => Math.hypot(p.x - m.x, p.y - m.y) < m.r + 40)
+    || (p.immune > 0 ? null : stage?.viruses.find((v) => Math.hypot(p.x - v.x, p.y - v.y) < 150))
+    || stage?.mines.find((m) => Math.hypot(p.x - m.x, p.y - m.y) < 70);
+  // A doomed bot runs at the nearest enemy to take them with it.
+  if (p.infected > 0 && target) {
+    mx = target.x - p.x;
+    my = target.y - p.y;
+  } else if (danger) {
+    // Get out of a meteor's landing zone, away from viruses and mines.
     mx = p.x - danger.x || 1;
     my = p.y - danger.y;
   } else if (brain.unstick > 0) {

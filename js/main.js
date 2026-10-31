@@ -15,6 +15,9 @@ import { createRoom, applyAction, canStart, addMember, removeMember } from './ro
 import { cleanName, MAX_PLAYERS, COLORS } from './settings.js';
 import { initInput, readInput, isTyping } from './input.js';
 import { initCanvas, render, renderBackdrop, renderMatchHud, setCrosshairHidden } from './render.js';
+import { drawGlitch } from './glitch.js';
+import { drawBlueScreen, setDisplayMode } from './stage-render.js';
+import { BSOD_OUT } from './stage.js';
 import { FONT, clearSpriteCache } from './pixel.js';
 import { initAudio, updateAudio, playUi } from './audio.js';
 import { createUI } from './ui.js';
@@ -36,7 +39,6 @@ const PING_MS = 2000;
 const TIMEOUT_MS = 10000;             // no message for this long = connection is gone
 const MAX_QUEUED_INPUTS = 6;
 const WINNER_SCREEN_DELAY = 1500;     // ms between the final kill and the winner screen
-const LOBBY_PATTERN = 0.22;           // spinning-cursor pattern opacity behind the lobby playground
 
 const canvas = document.getElementById('game');
 const ctx = initCanvas(canvas);
@@ -133,6 +135,7 @@ function rememberMe() {
   if (!me) return;
   prefs.name = me.name;
   prefs.color = me.color;
+  prefs.cursor = me.cursor;
   savePrefs();
 }
 
@@ -176,7 +179,7 @@ function showLobby() {
   document.body.classList.remove('in-match');
   client.lobby = { match: null, game: null };
   client.pending = [];
-  ui.showLobby(app.room, app.myId);
+  ui.showLobby(app.room, app.myId, menuScene.bgSeed);
 }
 
 function showMatch() {
@@ -213,7 +216,7 @@ function startHosting(name) {
   savePrefs();
   app.role = 'host';
   app.myId = HOST_ID;
-  app.room = createRoom({ id: HOST_ID, name: prefs.name, color: prefs.color });
+  app.room = createRoom({ id: HOST_ID, name: prefs.name, color: prefs.color, cursor: prefs.cursor });
   showLobby();
   openRoom(3);
 }
@@ -259,7 +262,7 @@ function onClientMessage(conn, msg) {
     };
     if (msg.v !== PROTOCOL) return reject('VERSION MISMATCH. REFRESH THE PAGE!');
     if (app.room.players.length >= MAX_PLAYERS) return reject('THAT ROOM IS FULL.');
-    addMember(app.room, { id, name: msg.name, color: msg.color });
+    addMember(app.room, { id, name: msg.name, color: msg.color, cursor: msg.cursor });
     host.conns.set(id, conn);
     host.queues.set(id, []);
     send(conn, { t: 'welcome', id });
@@ -329,13 +332,15 @@ function syncLobbyPlayers() {
     if (!p) {
       // Spawn on the open right-hand side of the screen (the lobby panel covers the left).
       const x = 700 + Math.random() * 480, y = 120 + Math.random() * 480;
-      p = addPlayer(game, m.id, { name: m.name, color: m.color, x, y });
+      p = addPlayer(game, m.id, { name: m.name, color: m.color, cursor: m.cursor, x, y });
     }
     if (p.color !== m.color) game.wallsVersion++;   // repaint their walls in the new color
     p.name = m.name;
     p.color = m.color;
+    p.cursor = m.cursor;
   }
-  lobby.roster = humans.map(({ id, name, color }) => ({ id, name, color }));
+  game.rules.wallpaper = app.room.settings.wallpaper;
+  lobby.roster = humans.map(({ id, name, color, cursor }) => ({ id, name, color, cursor }));
   lobby.settings = app.room.settings;
   host.forceFull = true;
 }
@@ -432,7 +437,7 @@ function joinGame(name, rawCode) {
       app.role = 'client';
       conn.on('data', wholeMessages(onHostMessage));
       conn.on('close', () => app.role === 'client' && goTitle('THE HOST LEFT THE GAME.'));
-      send(conn, { t: 'hello', v: PROTOCOL, name: prefs.name, color: prefs.color });
+      send(conn, { t: 'hello', v: PROTOCOL, name: prefs.name, color: prefs.color, cursor: prefs.cursor });
     },
     (err) => app.screen === 'title' && ui.setMessage(errorMessage(err)),
   );
@@ -472,7 +477,7 @@ function onHostMessage(msg) {
 }
 
 function canMove(match) {
-  return match && match.phase !== 'countdown';
+  return !!match;                     // even during the boot: only shooting and drawing wait for the desktop
 }
 
 // The view a client is currently looking at: the match or the lobby playground.
@@ -629,7 +634,7 @@ function frame(now) {
     const id = localId();
     if (app.role === 'client' && app.screen !== 'howto') {
       smoothRemotes(game, app.myId, dt);
-      if (match?.phase === 'countdown') match.timer = Math.max(0, match.timer - dt);
+      if (match?.phase === 'boot') match.timer = Math.max(0, match.timer - dt);
       if (match) match.goTimer = Math.max(0, (match.goTimer || 0) - dt);
       const me = game.players[app.myId];
       if (me?.alive) me.aim = Math.atan2(input.my - me.y, input.mx - me.x);   // aim feels instant
@@ -637,8 +642,17 @@ function frame(now) {
     const inLobby = app.screen === 'lobby';
     // Holding Space shows the brush circle; no need for the crosshair on top of it.
     setCrosshairHidden(canvas, !!input.draw && !app.menuOpen && !!game.players[id]?.alive);
-    render(ctx, game, id, input, { hud: !inLobby, pattern: inLobby ? LOBBY_PATTERN : 0 });
+    const booting = match?.phase === 'boot';
+    const boot = booting ? { left: match.timer, total: match.bootTime, full: match.round === 1 } : null;
+    render(ctx, game, id, input, { hud: !inLobby && !booting, boot });
     if (app.screen === 'match') renderMatchHud(ctx, match, id);
+    // The picture gets less stable the closer you are to blowing up.
+    const me = game.players[id];
+    const doomed = me?.alive && me.infected > 0 ? 0.25 + (1 - me.infected / 6) * 0.5 : 0;
+    setDisplayMode(ctx, canvas, game.stage?.fx.display?.mode);
+    drawBlueScreen(ctx, game, performance.now());
+    const crashing = game.stage?.bsod > 0 && game.stage.bsod <= BSOD_OUT ? 1 : 0;   // keep tearing as it breaks up
+    drawGlitch(ctx, Math.max(doomed, crashing, match?.suddenDeath ? 0.2 : 0));
     updateAudio(game);
 
     if (app.screen === 'match' && match.phase === 'gameOver') {
@@ -650,8 +664,9 @@ function frame(now) {
       }
     }
   } else {
+    setDisplayMode(ctx, canvas, null);
     setCrosshairHidden(canvas, false);
-    renderBackdrop(ctx, menuScene.bgSeed);
+    renderBackdrop(ctx, menuScene.bgSeed, app.room?.settings.wallpaper);
     updateAudio(menuScene);
   }
 }

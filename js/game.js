@@ -1,5 +1,7 @@
 // Pure game rules. No DOM, no networking — the host runs this; clients only mirror its results.
 
+import { createStage, stepStage, pressAt, bulletHitsStage, infectionBlast, blastClears } from './stage.js';
+
 export const ARENA = { w: 1280, h: 720 };
 
 // Walls live on a grid of small cells. One filled cell = one unit of ink.
@@ -60,10 +62,10 @@ export const POWERUP_TYPES = [
 export const MAP_EVENTS = ['eraser', 'meteor', 'blackout', 'gravity', 'paintbomb', 'mirror', 'inkstorm'];
 // Relative spawn chances; the map-wide events are rarer.
 export const POWERUP_WEIGHTS = Object.fromEntries(POWERUP_TYPES.map((t) => [t, MAP_EVENTS.includes(t) ? 0.5 : 1]));
-export const ROUND_START_POWERUPS = 4;
+export const ROUND_START_POWERUPS = 8;
 export const POWERUP_RADIUS = 20;
-export const POWERUP_INTERVAL = 30;   // default seconds between random spawns (0 = powerups off)
-export const MAX_POWERUPS = 6;        // no new spawns while this many are on the map
+export const POWERUP_INTERVAL = 10;   // default seconds between random spawns (0 = powerups off)
+export const MAX_POWERUPS = 12;       // no new spawns while this many are on the map
 export const FAT_DURATION = 15;       // seconds of 2x brush
 export const SMALL_DURATION = 15;     // seconds at half size
 export const RICOCHET_SHOTS = 30;     // trigger pulls that ricochet (any gun except rockets)
@@ -105,7 +107,8 @@ export const BLACKOUT_DURATION = 8;
 export const GRAVITY_DURATION = 6;
 const GRAVITY_PULL = 40000;           // pull speed = GRAVITY_PULL / distance (px/s), capped below
 const GRAVITY_MAX_PULL = 230;
-export const MIRROR_DURATION = 8;
+const SLOW_MULT = 0.5;                // LOW MEMORY and the like: half speed
+export const MIRROR_DURATION = 4;
 export const MIRROR_FLIP_TIME = 0.5;  // seconds of the flip animation at each end
 export const PAINT_SPLATS = 30;
 export const PAINT_SLOT = 255;        // wall cells from the paint bomb: nobody's, rainbow, ink for whoever breaks them
@@ -126,7 +129,13 @@ export function createGame(rules = {}, { firstEventId = 1, lobby = false } = {})
     penCapacity: rules.penCapacity ?? PEN_CAPACITY,
     powerupInterval: rules.powerupInterval ?? POWERUP_INTERVAL,
     mapEvents: !!rules.mapEvents,
+    stage: rules.stage ?? null,
+    wallpaper: rules.wallpaper ?? 'random',
+    stageEvents: !!rules.stageEvents,
+    popups: !!rules.popups,
+    viruses: !!rules.viruses,
   };
+  const bgSeed = newBackgroundSeed();
   return {
     rules: r,
     lobby,
@@ -153,7 +162,10 @@ export function createGame(rules = {}, { firstEventId = 1, lobby = false } = {})
     // rising id so listeners (and remote players) can tell which ones they've already handled.
     events: [],
     nextEventId: firstEventId,
-    bgSeed: newBackgroundSeed(),      // picks this round's background art; the host sends it to everyone
+    bgSeed,                           // picks this round's wallpaper and music; the host sends it to everyone
+    stage: r.stage && !lobby ? createStage(r.stage, bgSeed) : null,   // the living desktop (see stage.js)
+    desktop: null,                    // where the taskbar and score window are, once the OS has booted
+    noDrawFrom: Infinity,             // wall cells from this index on can't be drawn on (the taskbar)
   };
 }
 
@@ -165,13 +177,13 @@ export function newBackgroundSeed() {
   return Math.floor(Math.random() * 2 ** 32);
 }
 
-export function addPlayer(game, id, { name, color, x, y }) {
+export function addPlayer(game, id, { name, color, cursor, x, y }) {
   // Slot = small number (1–255) stored in wall cells to remember who drew them.
   const used = new Set(Object.values(game.players).map((p) => p.slot));
   let slot = 1;
   while (used.has(slot)) slot++;
   // hitCount only ever goes up; renderers watch it to trigger the hit flash.
-  game.players[id] = { id, slot, name, color, x, y, hitCount: 0 };
+  game.players[id] = { id, slot, name, color, cursor: cursor || 'hand', x, y, hitCount: 0 };
   respawnPlayer(game, id, x, y);
   return game.players[id];
 }
@@ -200,6 +212,15 @@ export function respawnPlayer(game, id, x, y) {
     trigger: false,                   // was the shoot button already held last tick (for dry-fire clicks)
     kvx: 0,                           // knockback velocity (px/s) from recoil and explosions
     kvy: 0,
+    slow: 0,                          // seconds left of each pop-up effect...
+    frozen: 0,
+    invert: 0,
+    jam: 0,
+    immune: 0,
+    freeAmmo: 0,
+    rapid: 0,                         // ...good and bad
+    infected: 0,                      // seconds until a virus blows this player up
+    pressCd: 0,                       // seconds until this player can click another desktop button
     burnUntil: 0,                     // game time before which flames can't burn this player again
     shields: null,                    // DEFENSE BALLS: hits left per sphere (0 = broken)
     orbit: 0,                         // current rotation of the shields
@@ -252,6 +273,7 @@ export function emptyInput() {
 }
 
 const MAX_EVENTS = 128;
+const TIMED_EFFECTS = ['slow', 'frozen', 'invert', 'jam', 'immune', 'freeAmmo', 'rapid', 'pressCd'];
 
 export function emit(game, type, data) {
   game.events.push({ id: game.nextEventId++, type, ...data });
@@ -262,12 +284,17 @@ export function emit(game, type, data) {
 export function applyMovement(game, p, input, dt) {
   let dx = (input.right ? 1 : 0) - (input.left ? 1 : 0);
   let dy = (input.down ? 1 : 0) - (input.up ? 1 : 0);
+  if (p.frozen > 0) dx = dy = 0;
+  if (p.invert > 0) {
+    dx = -dx;
+    dy = -dy;
+  }
   const len = Math.hypot(dx, dy);
   if (len > 0) {
     dx /= len;
     dy /= len;
   }
-  const speed = PLAYER_SPEED * (p.speed > 0 ? SPEED_MULT : 1);
+  const speed = PLAYER_SPEED * (p.speed > 0 ? SPEED_MULT : 1) * (p.slow > 0 ? SLOW_MULT : 1);
   const pull = gravityPull(game, p.x, p.y);
   const kvx = p.kvx || 0, kvy = p.kvy || 0;
   const mx = (dx * speed + pull.x + kvx) * dt, my = (dy * speed + pull.y + kvy) * dt;
@@ -302,7 +329,7 @@ function knock(p, angle, distance) {
 
 // Every player near a blast slides away from it: the closer to the center, the farther. Everyone,
 // teammates and the shooter included (they don't get hurt, but they do get shoved).
-function blastPush(game, x, y, radius, maxDistance, except = null) {
+export function blastPush(game, x, y, radius, maxDistance, except = null) {
   for (const p of Object.values(game.players)) {
     if (!p.alive || p === except) continue;
     const reach = (radius + playerRadius(p)) * BLAST_PUSH_REACH;
@@ -334,6 +361,12 @@ export function step(game, inputs, dt) {
     p.small = Math.max(0, p.small - dt);
     p.ghost = Math.max(0, p.ghost - dt);
     p.speed = Math.max(0, p.speed - dt);
+    for (const k of TIMED_EFFECTS) p[k] = Math.max(0, p[k] - dt);
+    if (p.infected > 0 && (p.infected -= dt) <= 0) {
+      p.infected = 0.001;             // still infected while it goes off (see hurtPlayer)
+      hurtPlayer(game, p, p.hp);
+      continue;
+    }
     if (p.shields) p.orbit = (p.orbit + SHIELD_SPIN * dt) % (Math.PI * 2);
 
     applyMovement(game, p, input, dt);
@@ -355,9 +388,14 @@ export function step(game, inputs, dt) {
       emit(game, 'reload', { x: p.x, y: p.y });
     }
 
-    if (input.draw) {
+    if (input.click && !p.trigger) pressAt(game, p);    // the trigger also clicks desktop buttons
+    const stunned = p.frozen > 0;
+    if (input.draw && !stunned) {
       if (input.click) paintStroke(game, p, input.mx, input.my);
       else p.pen = null;
+    } else if (stunned || p.jam > 0) {
+      p.pen = null;
+      if (input.click && !p.trigger) emit(game, 'dry', { x: p.x, y: p.y });
     } else {
       p.pen = null;
       // Small epsilon: repeated float subtraction leaves crumbs like 1e-17 that would cost an extra tick.
@@ -377,13 +415,18 @@ export function step(game, inputs, dt) {
     }
   }
 
-  stepBullets(game, dt);
-  stepMeteors(game, dt);
+  if (!(game.stage?.bsod > 0)) {      // a blue screen stops everything in mid-air
+    stepBullets(game, dt);
+    stepMeteors(game, dt);
+  }
+  stepStage(game, dt);
   if (game.lobby) stepLobby(game, dt);
   for (const key of ['blackout', 'gravity', 'mirror']) {
     const e = game[key];
     if (e && (e.t += dt) >= e.dur) game[key] = null;
   }
+
+  if (game.stage && !game.stage.ready) return;       // nothing appears until the OS has booted
 
   if (game.rules.powerupInterval > 0) game.powerupTimer -= dt;
   if (game.rules.powerupInterval > 0 && game.powerupTimer <= 0) {
@@ -408,7 +451,7 @@ export function findFreeSpot(game) {
   const m = PLAYER_RADIUS + 10;
   for (let i = 0; i < 200; i++) {
     const x = m + Math.random() * (ARENA.w - 2 * m);
-    const y = m + Math.random() * (ARENA.h - 2 * m);
+    const y = m + Math.random() * ((game.desktop ? game.desktop.bar.y : ARENA.h) - 2 * m);
     const crowded =
       Object.values(game.players).some((p) => p.alive && Math.hypot(p.x - x, p.y - y) < PLAYER_RADIUS * 3) ||
       game.powerups.some((u) => Math.hypot(u.x - x, u.y - y) < POWERUP_RADIUS * 3);
@@ -451,7 +494,7 @@ function collectPowerups(game, p) {
 }
 
 // Picking up a powerup you already have refreshes it.
-function applyPowerup(game, p, type) {
+export function applyPowerup(game, p, type) {
   if (type === 'fat') p.fat = FAT_DURATION;
   else if (type === 'small') p.small = SMALL_DURATION;
   else if (type === 'ricochet') {
@@ -490,8 +533,8 @@ function applyPowerup(game, p, type) {
   }
 }
 
-// The set pieces of a match: solid, breakable "walls" that look like a desktop. `rows` = how many
-// lines the score window needs (one per team).
+// The furniture of a match. The taskbar is a walkable surface that can't be damaged or drawn on; the
+// score window is a solid, breakable wall. `rows` = how many lines it needs (one per team).
 export function desktopLayout(rows) {
   const w = SCORE_WINDOW;
   return {
@@ -502,11 +545,13 @@ export function desktopLayout(rows) {
 
 export function placeDesktop(game, rows) {
   game.desktop = desktopLayout(rows);
-  for (const r of Object.values(game.desktop)) {
-    for (let cy = Math.floor(r.y / CELL); cy < Math.ceil((r.y + r.h) / CELL); cy++) {
-      for (let cx = Math.floor(r.x / CELL); cx < Math.ceil((r.x + r.w) / CELL); cx++) {
-        game.walls[cy * COLS + cx] = DESK_SLOT;
-      }
+  game.noDrawFrom = Math.floor(game.desktop.bar.y / CELL) * COLS;
+  const r = game.desktop.win;
+  for (let cy = Math.floor(r.y / CELL); cy < Math.ceil((r.y + r.h) / CELL); cy++) {
+    for (let cx = Math.floor(r.x / CELL); cx < Math.ceil((r.x + r.w) / CELL); cx++) {
+      const idx = cy * COLS + cx;
+      game.walls[idx] = DESK_SLOT;
+      game.wallLog?.push(idx, DESK_SLOT);
     }
   }
   game.wallsVersion++;
@@ -562,10 +607,10 @@ function paintBomb(game) {
   emit(game, 'paintbomb', {});
 }
 
-function paintBlob(game, slot, x, y, radius) {
+export function paintBlob(game, slot, x, y, radius) {
   const keepClear = clearZones(game);
   forCellsAround(x, y, radius, (c, r, idx) => {
-    if (game.walls[idx]) return;
+    if (game.walls[idx] || idx >= game.noDrawFrom) return;
     if (((c + 0.5) * CELL - x) ** 2 + ((r + 0.5) * CELL - y) ** 2 > radius * radius) return;
     if (keepClear.some((k) => circleOverlapsCell(k.x, k.y, k.r + PAINT_CLEARANCE, c, r))) return;
     game.walls[idx] = slot;
@@ -623,14 +668,14 @@ function stepMeteors(game, dt) {
 function shoot(game, p) {
   const kind = p.weapon;
   const def = WEAPONS[kind];
-  p.cooldown = def.cooldown;
+  p.cooldown = def.cooldown * (p.rapid > 0 ? 0.5 : 1);
   const ricochet = kind !== 'rocket' && p.ricochet > 0;
   if (ricochet) p.ricochet -= 1;
   emit(game, 'shoot', { x: p.x, y: p.y, w: kind, ricochet, pid: p.id, a: Math.round(p.aim * 100) / 100 });
   if (kind !== 'laser') knock(p, p.aim + Math.PI, RECOIL[kind] ?? 0);   // recoil: pushed back the way you came
 
   if (kind === 'pistol') {
-    p.ammo -= 1;
+    if (!(p.freeAmmo > 0)) p.ammo -= 1;
     if (p.ammo === 0) {
       p.reloading = RELOAD_TIME;
       emit(game, 'dry', { x: p.x, y: p.y });          // click: that was the last round
@@ -659,7 +704,7 @@ function shoot(game, p) {
     p.charging = def.charge;          // the beam fires when the charge completes (see step)
     emit(game, 'laserCharge', { x: p.x, y: p.y });
   }
-  p.weaponAmmo -= def.perShot;
+  if (!(p.freeAmmo > 0)) p.weaponAmmo -= def.perShot;
   if (p.weaponAmmo <= 0 && kind !== 'laser') {
     p.weapon = 'pistol';
     p.weaponAmmo = 0;
@@ -693,6 +738,14 @@ function fireLaser(game, p) {
   knock(p, p.aim + Math.PI, RECOIL.laser);
   p.weapon = 'pistol';
   p.weaponAmmo = 0;
+}
+
+// Something other than a player shooting: printers, calculators.
+export function fireFrom(game, { x, y, angle, speed, kind, owner = null, team = null, life = Infinity }) {
+  game.bullets.push({
+    id: game.nextBulletId++, owner, team, kind, x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+    ricochet: false, bounces: 0, bounced: false, range: Infinity, travel: 100, life,
+  });
 }
 
 // Bullets start at the player's center (never inside a wall) and travel out from there.
@@ -749,6 +802,7 @@ function stepBullets(game, dt) {
   const players = Object.values(game.players);
   game.bullets = game.bullets.filter((b) => {
     const kind = b.kind;
+    if (bulletHitsStage(game, b)) return false;
     if (kind === 'rocket') steerRocket(game, b, dt);
     if (kind === 'grenade') {
       const f = Math.exp(-GRENADE_FRICTION * dt);
@@ -902,13 +956,14 @@ function reflect(b, sideX, sideY) {
 
 // Blast (rockets, grenades): chews a big hole in walls and hurts everyone nearby — the shooter too.
 // `direct` already took the direct-hit damage, so the blast skips them.
-function explode(game, x, y, direct, { damage = EXPLOSION_DAMAGE, radius = EXPLOSION_RADIUS, by = null, team = null } = {}) {
+export function explode(game, x, y, direct, { damage = EXPLOSION_DAMAGE, radius = EXPLOSION_RADIUS, by = null, team = null } = {}) {
   chip(game, x, y, breakWall(game, x, y, EXPLOSION_WALL_RADIUS * (radius / EXPLOSION_RADIUS), by), true);
   for (const p of Object.values(game.players)) {
     if (!p.alive || p === direct || isTeammate(p, team, by)) continue;
     if (Math.hypot(p.x - x, p.y - y) <= radius + playerRadius(p)) hurtPlayer(game, p, damage, by);
   }
   blastPush(game, x, y, radius, BLAST_PUSH.explosion);
+  blastClears(game, x, y, radius);
   emit(game, 'explode', { x, y, r: radius });
 }
 
@@ -930,7 +985,8 @@ export function hurtPlayer(game, p, amount = 1, by = null) {
     emit(game, 'death', { x: p.x, y: p.y, by });
     const killer = by && by !== p.id ? game.players[by] : null;
     if (killer?.alive) healPlayer(game, killer, KILL_HEAL);
-    deathBlast(game, p, by);
+    if (p.infected > 0) infectionBlast(game, p);        // the virus goes off instead of the usual blast
+    else deathBlast(game, p, by);
   } else {
     emit(game, 'hit', { x: p.x, y: p.y });
   }
@@ -978,7 +1034,7 @@ function bounce(b, px, py) {
 // Paint bomb cells and the desktop set pieces belong to nobody: their ink goes to `by`, whoever
 // broke them (if anyone).
 // Returns the slot of a wall it broke (for the chip particles), or 0 if there was nothing to break.
-function breakWall(game, x, y, radius = BREAK_RADIUS, by = null) {
+export function breakWall(game, x, y, radius = BREAK_RADIUS, by = null) {
   const owners = playersBySlot(game);
   if (by != null && game.players[by]) owners[PAINT_SLOT] = owners[DESK_SLOT] = game.players[by];
   let changed = false, hitSlot = 0;
@@ -998,7 +1054,7 @@ function breakWall(game, x, y, radius = BREAK_RADIUS, by = null) {
 }
 
 // Little pixel chips flying off a wall that just got hit (purely visual; `big` for blasts).
-function chip(game, x, y, slot, big = false) {
+export function chip(game, x, y, slot, big = false) {
   if (slot) emit(game, 'chip', { x: Math.round(x), y: Math.round(y), slot, big });
 }
 
@@ -1054,7 +1110,7 @@ function paintDot(game, painter, x, y) {
   const brush = brushRadius(painter);
   let changed = false;
   forCellsAround(x, y, brush, (c, r, idx) => {
-    if (painter.ink <= 0 || game.walls[idx]) return;
+    if (painter.ink <= 0 || game.walls[idx] || idx >= game.noDrawFrom) return;
     if (((c + 0.5) * CELL - x) ** 2 + ((r + 0.5) * CELL - y) ** 2 > brush * brush) return;
     if (keepClear.some((k) => circleOverlapsCell(k.x, k.y, k.r + PAINT_CLEARANCE, c, r))) return;
     game.walls[idx] = painter.slot;
@@ -1086,7 +1142,7 @@ function movePlayer(game, p, dx, dy) {
   if (stuck || !circleHitsWall(game, p.x, ny, R)) p.y = ny;
 }
 
-function circleHitsWall(game, x, y, radius) {
+export function circleHitsWall(game, x, y, radius) {
   let hit = false;
   forCellsAround(x, y, radius, (c, r, idx) => {
     if (!hit && game.walls[idx] && circleOverlapsCell(x, y, radius, c, r)) hit = true;
